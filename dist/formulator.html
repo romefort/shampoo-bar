@@ -1091,9 +1091,33 @@ function validateFormulation(items) {
     if (item.pct > 0 && item.pct < ing.minPct) warnings.push({ msg: `${ing.name.split("(")[0].trim()}: ${item.pct}% below recommended min ${ing.minPct}%`, sev: "warn" });
   }
 
-  // ── Preservative check ──
+  // ── Preservative check — only require if formula contains water ──
   const hasPreservative = items.some(i => ingredientMap[i.id]?.slot === "PRESERVATIVE" && i.pct > 0);
-  if (!hasPreservative) errors.push({ msg: "No preservative! Water-containing bars MUST have broad-spectrum preservation.", sev: "error" });
+  const formulaHasWater = items.some(i => (ingredientMap[i.id]?.waterContent || 0) > 0 && i.pct > 0);
+  if (!hasPreservative && formulaHasWater) errors.push({ msg: "No preservative! Water-containing bars MUST have broad-spectrum preservation.", sev: "error" });
+  if (!hasPreservative && !formulaHasWater) info.push({ msg: "No preservative — acceptable for fully anhydrous formulas. Add one if any water-bearing ingredient is introduced.", sev: "info" });
+
+  // ── Incompatibility check ──
+  const presentIds = new Set(items.filter(i => i.pct > 0).map(i => i.id));
+  for (const item of items) {
+    const ing = ingredientMap[item.id];
+    if (!ing || item.pct === 0 || !ing.incompatible) continue;
+    for (const incompId of ing.incompatible) {
+      if (presentIds.has(incompId)) {
+        const other = ingredientMap[incompId];
+        warnings.push({ msg: `${ing.name.split("(")[0].trim()} is incompatible with ${other.name.split("(")[0].trim()} — check formulation notes.`, sev: "warn" });
+      }
+    }
+  }
+
+  // ── Required slot check ──
+  const filledSlots = new Set(items.filter(i => i.pct > 0).map(i => ingredientMap[i.id]?.slot).filter(Boolean));
+  for (const [slotId, slot] of Object.entries(FUNCTIONAL_SLOTS)) {
+    // Skip PRESERVATIVE — already handled above with water-awareness
+    if (slot.required && slotId !== "PRESERVATIVE" && !filledSlots.has(slotId)) {
+      warnings.push({ msg: `No ${slot.name} — most syndet bars need at least one.`, sev: "warn" });
+    }
+  }
 
   // ── Solid surfactant hardness ──
   const solidSurf = items.filter(i => {
