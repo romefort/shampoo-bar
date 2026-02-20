@@ -1,0 +1,21 @@
+{
+  "name": "shampoo-bar",
+  "version": "2.4.0",
+  "description": "Professional syndet shampoo bar formulator — 50+ ingredients, 12 templates, hair goals advisor, real-time validation",
+  "main": "src/formulator.jsx",
+  "scripts": {
+    "build": "bash build.sh",
+    "verify": "node verify.js"
+  },
+  "keywords": [
+    "syndet",
+    "shampoo-bar",
+    "formulator",
+    "cosmetic-chemistry",
+    "surfactant",
+    "react"
+  ],
+  "author": "Johann / sub.systems",
+  "license": "UNLICENSED",
+  "private": true
+}

@@ -1,0 +1,2132 @@
+const { useState, useMemo, useCallback, useRef } = React;
+
+// ═══════════════════════════════════════════════════════════════
+// INGREDIENT KNOWLEDGE GRAPH — v2
+// Enhanced with ASM data, compatibility rules, professional
+// constraints from Chemists Corner, Swift Crafty Monkey,
+// It's All In My Hands, Joan Morais, Colonial Chemical
+// ═══════════════════════════════════════════════════════════════
+
+const FUNCTIONAL_SLOTS = {
+  PRIMARY_SURFACTANT: { name: "Primary Solid Surfactant", phase: "dry", required: true, icon: "◆", description: "The backbone of your bar — provides cleansing and structure" },
+  SECONDARY_SURFACTANT: { name: "Secondary Solid Surfactant", phase: "dry", required: true, icon: "◇", description: "Complements the primary — boosts lather and cleansing" },
+  LIQUID_SURFACTANT: { name: "Liquid Surfactant", phase: "wet", required: true, icon: "●", description: "Creates the dough, boosts foam, adds mildness" },
+  FILLER: { name: "Filler / Bulking Agent", phase: "dry", required: false, icon: "▪", description: "Adds body, aids texture, can boost creaminess" },
+  HARDENER: { name: "Hardener / Structure", phase: "varies", required: false, icon: "▫", description: "Fatty alcohols, acids — adds hardness and structure" },
+  OIL_BUTTER: { name: "Oil or Butter", phase: "wet", required: false, icon: "○", description: "Re-fats the hair, prevents over-stripping" },
+  CONDITIONING: { name: "Conditioning Agent", phase: "wet", required: false, icon: "~", description: "Proteins, polyquats, humectants — improve hair feel" },
+  PH_ADJUSTER: { name: "pH Adjuster", phase: "varies", required: false, icon: "↕", description: "Brings pH into hair-friendly 4.5–6 range" },
+  PRESERVATIVE: { name: "Preservative", phase: "wet", required: true, icon: "⊕", description: "Prevents microbial growth — non-optional" },
+  FRAGRANCE: { name: "Fragrance / EO", phase: "wet", required: false, icon: "✦", description: "Scent — governed by IFRA category 7A limits" },
+  COLORANT: { name: "Colorant", phase: "varies", required: false, icon: "◎", description: "Dyes, micas, clays, charcoal" },
+};
+
+// ASM = Active Surfactant Matter (the % of actual surfactant in the raw material)
+// This is critical for professional formulation — Joan Morais, Chemists Corner
+const INGREDIENTS = [
+  // ════════════════════════════════════════
+  // PRIMARY SOLID SURFACTANTS
+  // ════════════════════════════════════════
+  {
+    id: "sci",
+    name: "Sodium Cocoyl Isethionate (SCI)",
+    slot: "PRIMARY_SURFACTANT",
+    phase: "dry", state: "solid_powder",
+    surfactantType: "anionic",
+    asm: 0.84, // Joan Morais: minimum 84% active substance
+    phContribution: "mildly_acidic", phApprox: 5.0, // Joan Morais: pH 4.5–6.5 (10% aqueous)
+    waterContent: 0, hardnessContribution: 0.8,
+    latherProfile: "dense_velvety",
+    minPct: 20, maxPct: 49.87,
+    maxNote: "CIR limit for rinse-off (2013 re-review noted 53% in use, but 50% is the safe standard)",
+    description: "The 'baby foam' surfactant. Gentle, coconut-derived. Dense, rich, luxurious 'lace glove' lather. Gold standard for syndet bars. Poorly soluble in water — soluble in other surfactants.",
+    processNote: "Available as powder or noodles. Noodles need melting with liquid surfactant at ≥70°C for proper crystal formation (Swift Crafty Monkey). Powder can be cold-pressed.",
+    substitutes: ["slsa", "scs", "bioterge_as90"],
+    subNotes: {
+      slsa: "Good swap — SLSa gives fluffier lather vs SCI's velvety. No pH issues.",
+      scs: "Stronger cleanser, much higher pH (~9.5) — will need acid adjustment. More stripping.",
+      bioterge_as90: "Solid sulfonate. Must be AS-90 (solid), NOT AS-40 (liquid)."
+    },
+    incompatible: [], // Note: BTMS-50 IS compatible in anhydrous syndet bars despite being cationic+anionic
+    tags: ["sulfate-free", "eco-cert", "coconut-derived", "cold-press-ok"],
+  },
+  {
+    id: "slsa",
+    name: "Sodium Lauryl Sulfoacetate (SLSa)",
+    slot: "SECONDARY_SURFACTANT",
+    alsoSlot: "PRIMARY_SURFACTANT",
+    phase: "dry", state: "solid_powder",
+    surfactantType: "anionic",
+    asm: 0.65, // Joan Morais: minimum 65% active substance
+    phContribution: "mildly_acidic", phApprox: 6.3, // Joan Morais: pH 6.3 (10% aqueous)
+    waterContent: 0, hardnessContribution: 0.9,
+    latherProfile: "fluffy_silky",
+    minPct: 10, maxPct: 60,
+    description: "ECO-CERT, gentle, gorgeous silky/fluffy lather. Fine lightweight powder. Great as primary or secondary. Approved by COSMOS, NaTrue.",
+    processNote: "Fine powder — cold-press friendly. One of the easiest surfactants to work with.",
+    substitutes: ["sci", "bioterge_as90", "scs"],
+    subNotes: {
+      sci: "Denser lather. Max 49.87%. Different lather character.",
+      bioterge_as90: "Direct swap. AS-90 solid form only.",
+      scs: "Stronger, higher pH — needs acid. More stripping."
+    },
+    incompatible: [],
+    tags: ["sulfate-free", "eco-cert", "cosmos", "coconut-derived", "cold-press-ok"],
+  },
+  {
+    id: "scs",
+    name: "Sodium Coco Sulfate (SCS)",
+    slot: "SECONDARY_SURFACTANT",
+    alsoSlot: "PRIMARY_SURFACTANT",
+    phase: "dry", state: "solid_noodle",
+    surfactantType: "anionic",
+    asm: 0.90,
+    phContribution: "basic", phApprox: 9.5,
+    waterContent: 0, hardnessContribution: 0.7,
+    latherProfile: "abundant_rich",
+    minPct: 10, maxPct: 45,
+    description: "Amps lather to decadent levels. Higher pH (~9.5) — requires acid adjustment. Contains sulfate. Noodle form needs melting.",
+    processNote: "MUST melt with liquid surfactant. Melting everything together forces pH to average out — unmelted SCS creates high-pH hot spots that cause tangles (Marie/Humble Bee & Me). Heat to ≥70°C for proper crystal formation.",
+    substitutes: ["slsa", "bioterge_as90"],
+    subNotes: {
+      slsa: "Gentler, no pH issues. Won't need melting. Less cleansing power.",
+      bioterge_as90: "Good alternative. Check pH."
+    },
+    incompatible: [],
+    companions: [{ id: "citric_acid", pct: 0.15, reason: "SCS is pH 9.5 — needs acid to bring formula to safe range" }],
+    tags: ["sulfate", "coconut-derived", "needs-melting"],
+  },
+  {
+    id: "bioterge_as90",
+    name: "Bio-Terge® AS-90 (Sodium C14-16 Olefin Sulfonate)",
+    slot: "SECONDARY_SURFACTANT",
+    alsoSlot: "PRIMARY_SURFACTANT",
+    phase: "dry", state: "solid_powder",
+    surfactantType: "anionic",
+    asm: 0.90,
+    phContribution: "neutral", phApprox: 7.0,
+    waterContent: 0, hardnessContribution: 0.85,
+    latherProfile: "fluffy_rich",
+    minPct: 10, maxPct: 50,
+    description: "Solid sulfonate. MUST be AS-90 (solid) — AS-40 is liquid and will NOT work. OGX shampoo brand uses SCI + olefin sulfonate as their base (Chemists Corner).",
+    processNote: "Cold-press friendly. Powder form.",
+    substitutes: ["slsa", "scs"],
+    subNotes: {
+      slsa: "Direct swap. Very similar performance.",
+      scs: "Stronger, higher pH — needs acid. Needs melting."
+    },
+    incompatible: [],
+    tags: ["sulfate-free", "cold-press-ok"],
+  },
+
+  // ════════════════════════════════════════
+  // LIQUID SURFACTANTS
+  // ════════════════════════════════════════
+  {
+    id: "capb",
+    name: "Cocamidopropyl Betaine (CAPB)",
+    slot: "LIQUID_SURFACTANT",
+    phase: "wet", state: "liquid",
+    surfactantType: "amphoteric",
+    asm: 0.30, // typically 30–35% active (It's All In My Hands)
+    phContribution: "mildly_acidic", phApprox: 5.5,
+    waterContent: 0.70,
+    hardnessContribution: -0.3,
+    latherProfile: "flash_foam",
+    minPct: 5, maxPct: 15,
+    maxNote: "Limit liquid surfactants to ~25% max for bar hardness (Soapmaking Forum/professional advice)",
+    description: "The classic choice. ~70% water content is crucial for dough formation. Boosts flash foam, makes bar milder. 10–15% recommended to help melt SCI (professional advice).",
+    processNote: "Can be used to melt/dissolve SCI noodles. Dissolve dyes in CAPB before adding to dry phase.",
+    substitutes: ["decyl_glucoside", "caprylyl_glucoside", "shea_betaine", "sodium_cocoamphoacetate"],
+    subNotes: {
+      decyl_glucoside: "Non-ionic, pH ~11-12 — WILL need citric acid. Rich pillowy lather. ⚠ Can weaken bars even at 2% (Chemists Corner: 7 separate trials).",
+      caprylyl_glucoside: "Non-ionic. Different lather feel. Check pH.",
+      shea_betaine: "Amphoteric like CAPB. Drop-in swap.",
+      sodium_cocoamphoacetate: "Amphoteric. Very gentle alternative for sensitive scalps."
+    },
+    incompatible: [],
+    tags: ["amphoteric", "widely-available", "dough-former"],
+  },
+  {
+    id: "decyl_glucoside",
+    name: "Decyl Glucoside",
+    slot: "LIQUID_SURFACTANT",
+    phase: "wet", state: "liquid",
+    surfactantType: "non-ionic",
+    asm: 0.50,
+    phContribution: "very_basic", phApprox: 11.5,
+    waterContent: 0.50,
+    hardnessContribution: -0.4, // WEAKENS bars significantly — Chemists Corner finding
+    latherProfile: "rich_pillowy",
+    minPct: 2, maxPct: 15,
+    description: "Non-ionic. Rich, pillowy lather. pH 11–12 — WILL need citric acid. ⚠ Chemists Corner finding: even 2% decyl glucoside weakens bars (7 separate trials at different %).",
+    processNote: "Sugar-derived surfactant. Provides good wetting but seriously impacts bar hardness.",
+    substitutes: ["capb", "caprylyl_glucoside"],
+    subNotes: {
+      capb: "Easier pH management. Doesn't weaken bars. More flash foam.",
+      caprylyl_glucoside: "Similar non-ionic. May also need pH adjustment."
+    },
+    incompatible: [],
+    companions: [{ id: "citric_acid", pct: 0.25, reason: "pH 11–12 — citric acid essential to bring formula to safe range" }],
+    tags: ["non-ionic", "high-ph", "weakens-bars"],
+  },
+  {
+    id: "caprylyl_glucoside",
+    name: "Caprylyl/Capryl Glucoside",
+    slot: "LIQUID_SURFACTANT",
+    phase: "wet", state: "liquid",
+    surfactantType: "non-ionic",
+    asm: 0.50,
+    phContribution: "basic", phApprox: 9.0,
+    waterContent: 0.45,
+    hardnessContribution: -0.2,
+    latherProfile: "creamy_dense",
+    minPct: 5, maxPct: 15,
+    description: "Non-ionic. Creamy, dense lather. Works beautifully paired with SCI+SLSa. Used in Marie's French Green Clay and Creamy French bars.",
+    processNote: "Less water than CAPB (~45% vs ~70%). May need slight wet/dry rebalance.",
+    substitutes: ["capb", "decyl_glucoside"],
+    subNotes: {
+      capb: "More flash foam. Easier pH. ~70% water vs ~45%.",
+      decyl_glucoside: "Very similar character. ⚠ Higher pH. Can weaken bars."
+    },
+    companions: [{ id: "citric_acid", pct: 0.15, reason: "pH ~9.0 — citric acid recommended for pH balance" }],
+    tags: ["non-ionic"],
+  },
+  {
+    id: "shea_betaine",
+    name: "Shea Butteramidopropyl Betaine",
+    slot: "LIQUID_SURFACTANT",
+    phase: "wet", state: "liquid",
+    surfactantType: "amphoteric",
+    asm: 0.30,
+    phContribution: "mildly_acidic", phApprox: 5.5,
+    waterContent: 0.65,
+    hardnessContribution: -0.3,
+    latherProfile: "creamy_mild",
+    minPct: 5, maxPct: 15,
+    description: "Amphoteric, similar to CAPB but with shea-derived conditioning. Drop-in replacement for CAPB.",
+    processNote: "Handles same as CAPB.",
+    substitutes: ["capb", "sodium_cocoamphoacetate"],
+    subNotes: {
+      capb: "Near-identical performance. CAPB is easier to source.",
+      sodium_cocoamphoacetate: "Also amphoteric. Gentler."
+    },
+    incompatible: [],
+    tags: ["amphoteric", "conditioning"],
+  },
+  {
+    id: "sodium_cocoamphoacetate",
+    name: "Sodium Cocoamphoacetate",
+    slot: "LIQUID_SURFACTANT",
+    phase: "wet", state: "liquid",
+    surfactantType: "amphoteric",
+    asm: 0.35,
+    phContribution: "mildly_acidic", phApprox: 6.0,
+    waterContent: 0.60,
+    hardnessContribution: -0.25,
+    latherProfile: "gentle_creamy",
+    minPct: 5, maxPct: 15,
+    description: "Amphoteric surfactant. Very gentle — recommended for sensitive scalps (Chemists Corner). Good CAPB alternative for those with CAPB sensitivity.",
+    processNote: "Handles like CAPB. Slightly less water content.",
+    substitutes: ["capb", "shea_betaine"],
+    subNotes: {
+      capb: "More common. More flash foam. Slightly more irritating for sensitive scalps.",
+      shea_betaine: "Also amphoteric. Similar gentleness."
+    },
+    incompatible: [],
+    tags: ["amphoteric", "sensitive-scalp", "gentle"],
+  },
+
+  // ════════════════════════════════════════
+  // FILLERS & BULKING AGENTS
+  // ════════════════════════════════════════
+  {
+    id: "kaolin",
+    name: "White Kaolin Clay",
+    slot: "FILLER", phase: "dry", state: "solid_powder",
+    phContribution: "neutral", phApprox: 7.0,
+    waterContent: 0, hardnessContribution: 0.4,
+    minPct: 0, maxPct: 15,
+    description: "Smooth, creamy clay. Boosts lather creaminess and dough workability. Great for moulds. Won't change hair colour (Swift Crafty Monkey Q&A).",
+    substitutes: ["french_green_clay", "corn_starch", "rice_flour", "australian_clay"],
+    subNotes: {
+      french_green_clay: "Adds green colour. Equally smooth. Direct swap.",
+      corn_starch: "Different texture — absorbs more liquid. May need wet/dry rebalance. ⚠ Preservation concern if formula contains water (It's All In My Hands).",
+      rice_flour: "Must be ultra-fine & silky.",
+      australian_clay: "Various colours. Similar smoothness."
+    },
+    tags: ["clay", "smooth", "creamy", "cold-press-ok"],
+  },
+  {
+    id: "french_green_clay",
+    name: "French Green Clay",
+    slot: "FILLER", alsoSlot: "COLORANT",
+    phase: "dry", state: "solid_powder",
+    phContribution: "neutral", phApprox: 7.5,
+    waterContent: 0, hardnessContribution: 0.4,
+    minPct: 0, maxPct: 12,
+    description: "Smooth, creamy, beautiful green colour. Safe in syndet bars — Marie confirmed no mould issues. Won't change colour-treated hair.",
+    substitutes: ["kaolin", "australian_clay"],
+    subNotes: {
+      kaolin: "White, neutral. Same texture.", australian_clay: "Various colours. Similar."
+    },
+    tags: ["clay", "smooth", "colorant", "cold-press-ok"],
+  },
+  {
+    id: "australian_clay",
+    name: "Australian Clay",
+    slot: "FILLER", alsoSlot: "COLORANT",
+    phase: "dry", state: "solid_powder",
+    phContribution: "neutral", phApprox: 7.0,
+    waterContent: 0, hardnessContribution: 0.4,
+    minPct: 0, maxPct: 12,
+    description: "Comes in various colours (pink, yellow, red, purple). Smooth texture similar to kaolin. Can be used for natural colouring.",
+    substitutes: ["kaolin", "french_green_clay"],
+    subNotes: {
+      kaolin: "White, neutral. Same texture.", french_green_clay: "Green only. Similar smoothness."
+    },
+    tags: ["clay", "smooth", "colorant", "cold-press-ok"],
+  },
+  {
+    id: "bentonite",
+    name: "Bentonite Clay",
+    slot: "FILLER", phase: "dry", state: "solid_powder",
+    phContribution: "mildly_basic", phApprox: 8.5,
+    waterContent: 0, hardnessContribution: 0.5,
+    minPct: 0, maxPct: 8,
+    description: "Heavy, absorbent, gel-forming clay. Boosts clarifying power significantly. NOT smooth/creamy like kaolin — NOT interchangeable with other clays.",
+    substitutes: [],
+    subNotes: {},
+    companions: [{ id: "citric_acid", pct: 0.15, reason: "Alkaline clay (pH 8.5) — acid keeps formula scalp-safe" }],
+    tags: ["clay", "clarifying", "absorbent", "no-easy-sub"],
+  },
+  {
+    id: "corn_starch",
+    name: "Corn Starch",
+    slot: "FILLER", phase: "dry", state: "solid_powder",
+    phContribution: "neutral", phApprox: 7.0,
+    waterContent: 0, hardnessContribution: 0.3,
+    minPct: 0, maxPct: 20,
+    description: "Lightweight filler from Colonial Chemical formulations. Absorbs liquid, creates dry-phase bulk. ⚠ It's All In My Hands warns: starch is 'food' for microbes — preservation must work extra hard in presence of water.",
+    substitutes: ["rice_flour", "arrowroot_starch", "kaolin"],
+    subNotes: {
+      rice_flour: "Very similar. Must be ultra-fine.", arrowroot_starch: "Direct swap. Silkier feel.",
+      kaolin: "Clay vs starch — different dough feel."
+    },
+    tags: ["starch", "neutral", "cold-press-ok"],
+  },
+  {
+    id: "rice_flour",
+    name: "Rice Flour / Rice Starch",
+    slot: "FILLER", phase: "dry", state: "solid_powder",
+    phContribution: "neutral", phApprox: 7.0,
+    waterContent: 0, hardnessContribution: 0.3,
+    minPct: 0, maxPct: 20,
+    description: "Ultra-fine, silky powder. Hair-care tradition (rice water rinse). MUST be soft & silky, not coarsely ground. Potato starch works 1:1 (community-verified).",
+    substitutes: ["corn_starch", "arrowroot_starch", "potato_starch"],
+    subNotes: {
+      corn_starch: "Direct swap.", arrowroot_starch: "Direct swap.", potato_starch: "Works 1:1 (community tested)."
+    },
+    tags: ["starch", "hair-tradition", "cold-press-ok"],
+  },
+  {
+    id: "arrowroot_starch", name: "Arrowroot Starch", slot: "FILLER", phase: "dry", state: "solid_powder",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: 0.3,
+    minPct: 0, maxPct: 20, description: "Silky smooth starch. Good general-purpose filler.",
+    substitutes: ["corn_starch", "rice_flour"], subNotes: { corn_starch: "Direct swap.", rice_flour: "Direct swap." },
+    tags: ["starch", "cold-press-ok"],
+  },
+  {
+    id: "potato_starch", name: "Potato Starch", slot: "FILLER", phase: "dry", state: "solid_powder",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: 0.3,
+    minPct: 0, maxPct: 20, description: "Works 1:1 with rice flour per community testing.",
+    substitutes: ["rice_flour", "corn_starch"], subNotes: { rice_flour: "Direct swap.", corn_starch: "Direct swap." },
+    tags: ["starch", "cold-press-ok"],
+  },
+  {
+    id: "iota_carrageenan", name: "Iota Carrageenan", slot: "FILLER", phase: "dry", state: "solid_powder",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: 0.35,
+    minPct: 0, maxPct: 5, description: "LUSH-inspired ingredient ('Irish Moss Gel'). Adds body and gel-like quality.",
+    substitutes: ["guar_gum"], subNotes: { guar_gum: "Similar thickening. May affect drying time." },
+    tags: ["thickener", "gelling"],
+  },
+  {
+    id: "guar_gum", name: "Guar Gum", slot: "FILLER", phase: "dry", state: "solid_powder",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: 0.2,
+    minPct: 0, maxPct: 3, description: "Thickener/gelling agent. Can replace carrageenan. May affect drying time.",
+    substitutes: ["iota_carrageenan"], subNotes: { iota_carrageenan: "Better established in syndet bars." },
+    tags: ["thickener"],
+  },
+
+  // ════════════════════════════════════════
+  // HARDENERS & STRUCTURE (new category from pro sources)
+  // ════════════════════════════════════════
+  {
+    id: "sodium_lactate",
+    name: "Sodium Lactate",
+    slot: "HARDENER", phase: "wet", state: "liquid",
+    phContribution: "mildly_acidic", phApprox: 6.5,
+    waterContent: 0.40,
+    hardnessContribution: 0.5,
+    minPct: 0, maxPct: 5,
+    description: "Powerful hardening agent — pulls moisture from bars during curing. Used in Susan Barclay-Nichols' base formula at 3%. Also used in soap for hardness. Alternative to adding more clay/starch.",
+    substitutes: [],
+    subNotes: {},
+    tags: ["hardener", "professional"],
+  },
+  {
+    id: "cetyl_alcohol",
+    name: "Cetyl Alcohol",
+    slot: "HARDENER", phase: "wet", state: "solid_waxy",
+    phContribution: "neutral", phApprox: 7.0,
+    waterContent: 0,
+    hardnessContribution: 0.4,
+    minPct: 0, maxPct: 5,
+    description: "Fatty alcohol. Adds hardness, slip, and smoothness. Better choice than cetearyl alcohol when BTMS-50 is present (as BTMS-50 already contains 75% cetearyl — Chemists Corner). Needs melting.",
+    processNote: "Melt with other heated ingredients. ⚠ Chemists Corner: too much makes bar feel 'draggy'. Keep to 2–5%.",
+    substitutes: ["stearic_acid"],
+    subNotes: { stearic_acid: "Also adds hardness. More waxy feel. Can make bar slightly draggy." },
+    tags: ["fatty-alcohol", "needs-melting", "hardener"],
+  },
+  {
+    id: "stearic_acid",
+    name: "Stearic Acid",
+    slot: "HARDENER", phase: "wet", state: "solid_waxy",
+    phContribution: "neutral", phApprox: 7.0,
+    waterContent: 0,
+    hardnessContribution: 0.6,
+    minPct: 0, maxPct: 5,
+    description: "Fatty acid. Strong hardener. ⚠ Chemists Corner warns: can make bars feel 'draggy'. Used in some professional formulations but many pro formulators advise removing it.",
+    processNote: "Must melt at ≥70°C for proper crystal formation (Swift Crafty Monkey). Freezing bars after molding helps crystal formation.",
+    substitutes: ["cetyl_alcohol"],
+    subNotes: { cetyl_alcohol: "Less draggy feel. Better slip." },
+    tags: ["fatty-acid", "needs-melting", "hardener"],
+  },
+  {
+    id: "btms_50",
+    name: "BTMS-50 (Behentrimonium Methosulfate)",
+    slot: "CONDITIONING", alsoSlot: "HARDENER",
+    phase: "wet", state: "solid_waxy",
+    surfactantType: "cationic",
+    asm: 0.25,
+    phContribution: "neutral", phApprox: 6.5,
+    waterContent: 0,
+    hardnessContribution: 0.3,
+    minPct: 0, maxPct: 7,
+    description: "Cationic conditioning emulsifier. Contains ~75% cetearyl alcohol. ⚠ Cationic + anionic is normally incompatible, BUT works in anhydrous syndet bars (Chemists Corner confirms). Used in Susan's base formula at 3%. Activates with water during use — targeted conditioning.",
+    processNote: "Melt with heated phase. Do NOT add extra cetearyl alcohol — BTMS-50 already contains 75% (Chemists Corner). Cetyl alcohol is the better pairing.",
+    substitutes: ["btms_25"],
+    subNotes: { btms_25: "Similar but different cetearyl ratio. Lower conditioning." },
+    companions: [{ id: "citric_acid", pct: 0.2, reason: "Cationic conditioner — works best at pH 4–6. Citric acid ensures proper deposition." }],
+    incompatible: ["capb_in_water"], // Only in aqueous systems — fine in anhydrous syndet
+    tags: ["cationic", "conditioning", "needs-melting", "professional"],
+  },
+  {
+    id: "btms_25",
+    name: "BTMS-25",
+    slot: "CONDITIONING", alsoSlot: "HARDENER",
+    phase: "wet", state: "solid_waxy",
+    surfactantType: "cationic",
+    asm: 0.25,
+    phContribution: "neutral", phApprox: 6.5,
+    waterContent: 0,
+    hardnessContribution: 0.3,
+    minPct: 0, maxPct: 7,
+    description: "Conditioning emulsifier. Similar to BTMS-50 but different cetearyl alcohol ratio. Less widely available.",
+    processNote: "Melt with heated phase.",
+    substitutes: ["btms_50"],
+    subNotes: { btms_50: "More common. Higher conditioning." },
+    companions: [{ id: "citric_acid", pct: 0.2, reason: "Cationic conditioner — works best at pH 4–6" }],
+    tags: ["cationic", "conditioning", "needs-melting"],
+  },
+
+  // ════════════════════════════════════════
+  // OILS & BUTTERS
+  // ════════════════════════════════════════
+  {
+    id: "jojoba", name: "Jojoba Oil", slot: "OIL_BUTTER", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: -0.1,
+    minPct: 0, maxPct: 11,
+    description: "Technically a liquid wax. Mimics sebum. Excellent all-round choice. Chemists Corner debate: oils wash off in a surfactant system, but they do moderate perceived harshness.",
+    substitutes: ["argan", "abyssinian", "camellia", "castor", "fractionated_coconut"],
+    subNotes: {
+      argan: "Richer. Great for dry/damaged hair.", abyssinian: "Light, silky.",
+      camellia: "Traditional Japanese hair oil.", castor: "Thicker, more conditioning.",
+      fractionated_coconut: "Very light, neutral. Budget option."
+    },
+    tags: ["liquid-oil", "versatile"],
+  },
+  {
+    id: "argan", name: "Argan Oil", slot: "OIL_BUTTER", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: -0.1,
+    minPct: 0, maxPct: 11, description: "Rich, luxurious. Packed with vitamin E. Great for dry/damaged hair.",
+    substitutes: ["jojoba", "abyssinian", "camellia"],
+    subNotes: { jojoba: "Lighter. Mimics sebum.", abyssinian: "Similarly silky.", camellia: "Lighter, traditional." },
+    tags: ["liquid-oil", "luxury"],
+  },
+  {
+    id: "abyssinian", name: "Abyssinian Seed Oil", slot: "OIL_BUTTER", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: -0.1,
+    minPct: 0, maxPct: 11, description: "Light, silky oil. Marie's favourite for many bars.",
+    substitutes: ["jojoba", "argan", "camellia"],
+    subNotes: { jojoba: "Slightly heavier.", argan: "Richer.", camellia: "Very similar lightness." },
+    tags: ["liquid-oil", "silky"],
+  },
+  {
+    id: "castor", name: "Castor Oil", slot: "OIL_BUTTER", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: -0.05,
+    minPct: 0, maxPct: 8, description: "Thick, viscous. Said to strengthen hair and boost growth.",
+    substitutes: ["jojoba", "fractionated_coconut"],
+    subNotes: { jojoba: "Lighter.", fractionated_coconut: "Much lighter. Budget." },
+    tags: ["liquid-oil", "thick"],
+  },
+  {
+    id: "fractionated_coconut", name: "Fractionated Coconut Oil", slot: "OIL_BUTTER", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: -0.1,
+    minPct: 0, maxPct: 11, description: "Very light, neutral, odorless. Good budget option. Always liquid.",
+    substitutes: ["jojoba", "argan", "camellia"],
+    subNotes: { jojoba: "Richer.", argan: "More luxurious.", camellia: "More traditional." },
+    tags: ["liquid-oil", "budget"],
+  },
+  {
+    id: "camellia", name: "Camellia Seed Oil", slot: "OIL_BUTTER", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: -0.1,
+    minPct: 0, maxPct: 8, description: "Traditional Japanese hair oil. Light, conditioning.",
+    substitutes: ["jojoba", "abyssinian"], subNotes: { jojoba: "Equally light.", abyssinian: "Very similar weight." },
+    tags: ["liquid-oil", "traditional"],
+  },
+  {
+    id: "moringa", name: "Moringa Oil", slot: "OIL_BUTTER", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: -0.1,
+    minPct: 0, maxPct: 8, description: "Light, stable oil. Good conditioning.",
+    substitutes: ["jojoba", "argan", "abyssinian"],
+    subNotes: { jojoba: "Direct swap.", argan: "Richer.", abyssinian: "Very similar." },
+    tags: ["liquid-oil"],
+  },
+  {
+    id: "tucuma", name: "Tucuma Butter", slot: "OIL_BUTTER", phase: "wet", state: "solid_brittle",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: 0.3,
+    minPct: 0, maxPct: 6,
+    description: "Brittle butter — helps bar hardness. Needs melting. Recommended over soft butters (shea/mango) for bars.",
+    substitutes: ["cocoa_butter"], subNotes: { cocoa_butter: "Equally brittle. Slight chocolate scent." },
+    tags: ["butter", "brittle", "needs-melting"],
+  },
+  {
+    id: "cocoa_butter", name: "Cocoa Butter", slot: "OIL_BUTTER", phase: "wet", state: "solid_brittle",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: 0.3,
+    minPct: 0, maxPct: 6, description: "Brittle butter. Helps bar hardness. Slight cocoa scent.",
+    substitutes: ["tucuma"], subNotes: { tucuma: "Neutral scent. Equally brittle." },
+    tags: ["butter", "brittle", "needs-melting"],
+  },
+  {
+    id: "mango_butter", name: "Mango Butter", slot: "OIL_BUTTER", phase: "wet", state: "solid_soft",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: 0.1,
+    minPct: 0, maxPct: 8,
+    description: "Soft butter. Needs melting. ⚠ Not ideal for bar hardness — brittle butters (tucuma, cocoa) are better.",
+    substitutes: ["tucuma", "cocoa_butter"],
+    subNotes: { tucuma: "Brittle — much better for bar hardness.", cocoa_butter: "Brittle — better for hardness." },
+    tags: ["butter", "soft", "needs-melting"],
+  },
+
+  // ════════════════════════════════════════
+  // CONDITIONING AGENTS
+  // ════════════════════════════════════════
+  {
+    id: "pq7", name: "Polyquaternium 7", slot: "CONDITIONING", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0.75, hardnessContribution: -0.1,
+    surfactantType: "cationic", asm: 0,
+    minPct: 0, maxPct: 3,
+    description: "Cationic conditioning polymer. Improves wet/dry combing. Liquid form ~25% active. Powder form available — use at 25% of liquid amount, replace rest with water (Marie).",
+    substitutes: ["pq10", "hydratress"],
+    subNotes: { pq10: "Powder form. Lower usage rate.", hydratress: "Panthenol+protein blend." },
+    companions: [{ id: "citric_acid", pct: 0.1, reason: "Cationic polymer deposits better at pH 4–6" }],
+    tags: ["conditioning", "cationic"],
+  },
+  {
+    id: "pq10", name: "Polyquaternium 10", slot: "CONDITIONING", phase: "wet", state: "solid_powder",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: 0,
+    surfactantType: "cationic", asm: 0,
+    minPct: 0, maxPct: 1,
+    description: "Cationic conditioning polymer. Powder form. Low usage rate. Guar quat at 0.8% is noted in Ajinomoto professional formulations.",
+    substitutes: ["pq7"], subNotes: { pq7: "Liquid form. Higher usage rate." },
+    companions: [{ id: "citric_acid", pct: 0.1, reason: "Cationic polymer deposits better at pH 4–6" }],
+    tags: ["conditioning", "cationic", "powder"],
+  },
+  {
+    id: "hydrolyzed_rice_protein", name: "Hydrolyzed Rice Protein", slot: "CONDITIONING", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 6.5, waterContent: 0.80, hardnessContribution: -0.05,
+    minPct: 0, maxPct: 5,
+    description: "Structures and strengthens hair. Counters drying from cleansing. Susan's base formula uses protein at 1.5%.",
+    substitutes: ["hydrolyzed_oat_protein", "hydrolyzed_silk", "panthenol"],
+    subNotes: {
+      hydrolyzed_oat_protein: "Direct swap.", hydrolyzed_silk: "More shine. Luxury feel.",
+      panthenol: "Different mechanism — humectant. Powder form ~2%."
+    },
+    tags: ["protein", "conditioning"],
+  },
+  {
+    id: "hydrolyzed_oat_protein", name: "Hydrolyzed Oat Protein", slot: "CONDITIONING", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 6.5, waterContent: 0.80, hardnessContribution: -0.05,
+    minPct: 0, maxPct: 5, description: "Film-forming protein. Strengthens and smooths hair.",
+    substitutes: ["hydrolyzed_rice_protein", "hydrolyzed_silk"],
+    subNotes: { hydrolyzed_rice_protein: "Direct swap.", hydrolyzed_silk: "More shine." },
+    tags: ["protein", "conditioning"],
+  },
+  {
+    id: "hydrolyzed_silk", name: "Hydrolyzed Silk", slot: "CONDITIONING", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 6.5, waterContent: 0.80, hardnessContribution: -0.05,
+    minPct: 0, maxPct: 3, description: "Adds shine and slip. Luxurious feel on hair.",
+    substitutes: ["hydrolyzed_rice_protein", "hydrolyzed_oat_protein"],
+    subNotes: { hydrolyzed_rice_protein: "Direct swap.", hydrolyzed_oat_protein: "Direct swap." },
+    tags: ["protein", "shine"],
+  },
+  {
+    id: "hydratress", name: "Fision® HydraTress", slot: "CONDITIONING", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 6.5, waterContent: 0.50, hardnessContribution: -0.05,
+    minPct: 0, maxPct: 5,
+    description: "Commercial panthenol+protein blend. Replace with: 2% panthenol powder + 3% liquid hydrolyzed protein.",
+    substitutes: ["panthenol"], subNotes: { panthenol: "Use 2% panthenol + 3% protein to replace." },
+    tags: ["conditioning", "commercial-blend"],
+  },
+  {
+    id: "panthenol", name: "Panthenol (Vitamin B5)", slot: "CONDITIONING", phase: "wet", state: "solid_powder",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: 0,
+    minPct: 0, maxPct: 3,
+    description: "Humectant and conditioner. Penetrates hair shaft. Susan's base formula uses 1% DL-Panthenol. Available liquid or powder.",
+    substitutes: ["hydrolyzed_rice_protein"],
+    subNotes: { hydrolyzed_rice_protein: "Different mechanism (protein vs humectant). Both valuable." },
+    tags: ["conditioning", "humectant"],
+  },
+  {
+    id: "glycerin", name: "Vegetable Glycerin", slot: "CONDITIONING", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: -0.15,
+    minPct: 0, maxPct: 4,
+    description: "Humectant. Counters drying. ⚠ Chemists Corner warns: glycerin in shampoo bars is controversial — some pro formulators found it makes bars sticky and soft. 2% max recommended. It has been used to dissolve surfactants but bars dissolve quickly during use.",
+    substitutes: [], subNotes: {},
+    tags: ["humectant"],
+  },
+  {
+    id: "distilled_water", name: "Distilled Water", slot: "CONDITIONING", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 1.0, hardnessContribution: -0.5,
+    minPct: 0, maxPct: 8,
+    description: "Additional water. Increases need for preservation. Some water comes in via liquid surfactants already. 5–6% typical as binder in syndet bars (Chemists Corner professional). NaCl can lower water activity.",
+    substitutes: [], subNotes: {},
+    tags: ["solvent"],
+  },
+  {
+    id: "vitamin_e", name: "Vitamin E (MT-50)", slot: "CONDITIONING", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: 0,
+    minPct: 0, maxPct: 0.5,
+    description: "Antioxidant — protects oils from rancidity. NOT a preservative (doesn't protect against microbes).",
+    substitutes: [], subNotes: {},
+    tags: ["antioxidant"],
+  },
+
+  // ════════════════════════════════════════
+  // pH ADJUSTERS
+  // ════════════════════════════════════════
+  {
+    id: "citric_acid", name: "Citric Acid", slot: "PH_ADJUSTER", phase: "dry", state: "solid_powder",
+    phContribution: "acidic", phApprox: 2.0, waterContent: 0, hardnessContribution: 0,
+    minPct: 0, maxPct: 1,
+    description: "Primary pH adjuster. A little goes a long way. Essential with basic surfactants (SCS, Decyl Glucoside). Marie uses ~0.125% to bring a 40% SCS formula to pH ~5.",
+    substitutes: ["lactic_acid"],
+    subNotes: { lactic_acid: "Liquid acid. Will change wet/dry ratio." },
+    tags: ["ph-down", "widely-available"],
+  },
+  {
+    id: "lactic_acid", name: "Lactic Acid (90%)", slot: "PH_ADJUSTER", phase: "wet", state: "liquid",
+    phContribution: "acidic", phApprox: 2.5, waterContent: 0.10, hardnessContribution: 0,
+    minPct: 0, maxPct: 1,
+    description: "Liquid acid alternative. Used in Marie's Champagne bar at 0.6%. Also an AHA — mild exfoliating.",
+    substitutes: ["citric_acid"], subNotes: { citric_acid: "Powder form. Easier for dry-phase." },
+    tags: ["ph-down"],
+  },
+
+  // ════════════════════════════════════════
+  // PRESERVATIVES
+  // ════════════════════════════════════════
+  {
+    id: "optiphen_plus", name: "Optiphen™ Plus", slot: "PRESERVATIVE", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 5.0, waterContent: 0, hardnessContribution: 0,
+    minPct: 0.75, maxPct: 1.5, fixedPct: 1.0,
+    description: "Broad-spectrum. ~1% usage. Paraben-free. Wide pH range. Add to base formula first, then test — preservation is not optional (Chemists Corner: add preservative to established base, see how it goes).",
+    substitutes: ["germall_plus", "geogard_ect"],
+    subNotes: { germall_plus: "Use at 0.4–0.5%.", geogard_ect: "Use at ~1%. ECO-CERT." },
+    tags: ["preservative", "broad-spectrum"],
+  },
+  {
+    id: "germall_plus", name: "Liquid Germall Plus™", slot: "PRESERVATIVE", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 6.0, waterContent: 0.50, hardnessContribution: 0,
+    minPct: 0.1, maxPct: 0.5, fixedPct: 0.4,
+    description: "Broad-spectrum. 0.4–0.5%. Used in Susan's base formula at 0.5%. Contains formaldehyde donors.",
+    substitutes: ["optiphen_plus", "geogard_ect"],
+    subNotes: { optiphen_plus: "Use at ~1%. Paraben-free.", geogard_ect: "Use at ~1%. ECO-CERT." },
+    tags: ["preservative", "broad-spectrum"],
+  },
+  {
+    id: "geogard_ect", name: "Geogard® ECT", slot: "PRESERVATIVE", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 5.5, waterContent: 0, hardnessContribution: 0,
+    minPct: 0.5, maxPct: 1.5, fixedPct: 1.0,
+    description: "ECO-CERT approved. ~1%. Good for natural formulations.",
+    substitutes: ["optiphen_plus", "germall_plus"],
+    subNotes: { optiphen_plus: "Use at ~1%.", germall_plus: "Use at 0.4–0.5%." },
+    tags: ["preservative", "eco-cert"],
+  },
+
+  // ════════════════════════════════════════
+  // FRAGRANCE & COLORANTS
+  // ════════════════════════════════════════
+  {
+    id: "fragrance", name: "Fragrance Oil", slot: "FRAGRANCE", phase: "wet", state: "liquid",
+    phContribution: "varies", phApprox: 6.0, waterContent: 0, hardnessContribution: 0,
+    minPct: 0, maxPct: 1.5,
+    description: "Check IFRA category 7A limit for your specific FO. Will alter pH. Choose clear FO to avoid discolouration.",
+    substitutes: ["essential_oil"], subNotes: { essential_oil: "Natural. Check individual limits." },
+    tags: ["scent"],
+  },
+  {
+    id: "essential_oil", name: "Essential Oil Blend", slot: "FRAGRANCE", phase: "wet", state: "liquid",
+    phContribution: "varies", phApprox: 6.0, waterContent: 0, hardnessContribution: 0,
+    minPct: 0, maxPct: 1,
+    description: "Natural scent. Check individual EO limits. Will alter pH.",
+    substitutes: ["fragrance"], subNotes: { fragrance: "Wider scent palette. Check IFRA limits." },
+    tags: ["scent", "natural"],
+  },
+  {
+    id: "activated_charcoal", name: "Activated Charcoal", slot: "COLORANT", phase: "dry", state: "solid_powder",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: 0.1,
+    minPct: 0, maxPct: 1,
+    description: "Inky black. Super absorbent — boosts clarifying power. Functional colorant, not just cosmetic.",
+    substitutes: [], subNotes: {},
+    tags: ["colorant", "clarifying"],
+  },
+  {
+    id: "water_soluble_dye", name: "Water-Soluble Dye", slot: "COLORANT", phase: "wet", state: "liquid",
+    phContribution: "neutral", phApprox: 7.0, waterContent: 0, hardnessContribution: 0,
+    minPct: 0, maxPct: 0.1, description: "Dissolve in liquid surfactant before adding. Tiny amounts.",
+    substitutes: [], subNotes: {},
+    tags: ["colorant"],
+  },
+];
+
+// ── RECIPE TEMPLATES ──
+const TEMPLATES = [
+  {
+    id: "simple_sulfate_free", name: "Simple Sulfate-Free", source: "Humble Bee & Me",
+    description: "7 ingredients, no heat. SLSa-based.",
+    ingredients: [
+      { id: "slsa", pct: 60 }, { id: "rice_flour", pct: 14 }, { id: "capb", pct: 10 },
+      { id: "fractionated_coconut", pct: 10 }, { id: "distilled_water", pct: 4 },
+      { id: "optiphen_plus", pct: 1.5 }, { id: "fragrance", pct: 0.5 },
+    ]
+  },
+  {
+    id: "rice_starch_bar", name: "Rice Starch SCI+SLSa", source: "Humble Bee & Me",
+    description: "SCI+SLSa blend with rice flour.",
+    ingredients: [
+      { id: "sci", pct: 40 }, { id: "slsa", pct: 23 }, { id: "rice_flour", pct: 15 },
+      { id: "capb", pct: 11.99 }, { id: "camellia", pct: 5 }, { id: "hydrolyzed_rice_protein", pct: 4 },
+      { id: "germall_plus", pct: 0.5 }, { id: "fragrance", pct: 0.4 }, { id: "vitamin_e", pct: 0.1 },
+      { id: "water_soluble_dye", pct: 0.01 },
+    ]
+  },
+  {
+    id: "charcoal_clarifying", name: "Charcoal Clarifying", source: "Humble Bee & Me",
+    description: "Activated charcoal + bentonite for deep cleansing.",
+    ingredients: [
+      { id: "slsa", pct: 40 }, { id: "sci", pct: 26 }, { id: "bentonite", pct: 5 },
+      { id: "activated_charcoal", pct: 0.5 }, { id: "capb", pct: 13.1 }, { id: "jojoba", pct: 9.5 },
+      { id: "glycerin", pct: 2 }, { id: "hydrolyzed_rice_protein", pct: 2 },
+      { id: "geogard_ect", pct: 1 }, { id: "fragrance", pct: 0.8 }, { id: "citric_acid", pct: 0.1 },
+    ]
+  },
+  {
+    id: "ice_palace", name: "Ice Palace (4 surfactants)", source: "Humble Bee & Me",
+    description: "SCI+SLSa+Decyl Glucoside+CAPB. Rich pillowy lather.",
+    ingredients: [
+      { id: "sci", pct: 37 }, { id: "slsa", pct: 20 }, { id: "corn_starch", pct: 11 },
+      { id: "kaolin", pct: 5 }, { id: "citric_acid", pct: 0.25 }, { id: "decyl_glucoside", pct: 14 },
+      { id: "capb", pct: 6.75 }, { id: "moringa", pct: 4.5 }, { id: "optiphen_plus", pct: 1 },
+      { id: "fragrance", pct: 0.5 },
+    ]
+  },
+  {
+    id: "champagne", name: "Champagne (SCI+SCS)", source: "Humble Bee & Me",
+    description: "SCI+SCS blend. Decadent lather. Contains sulfate.",
+    ingredients: [
+      { id: "sci", pct: 43.3 }, { id: "scs", pct: 20 }, { id: "kaolin", pct: 15 },
+      { id: "abyssinian", pct: 11 }, { id: "capb", pct: 7.4 }, { id: "pq7", pct: 1.5 },
+      { id: "fragrance", pct: 0.7 }, { id: "lactic_acid", pct: 0.6 }, { id: "germall_plus", pct: 0.5 },
+    ]
+  },
+  {
+    id: "castor_rice", name: "Castor & Rice", source: "Humble Bee & Me",
+    description: "SCI+SLSa with castor oil and rice flour.",
+    ingredients: [
+      { id: "sci", pct: 35 }, { id: "slsa", pct: 25 }, { id: "rice_flour", pct: 17.25 },
+      { id: "citric_acid", pct: 0.25 }, { id: "capb", pct: 10.5 }, { id: "hydratress", pct: 5 },
+      { id: "castor", pct: 4.9 }, { id: "optiphen_plus", pct: 1 }, { id: "fragrance", pct: 1 },
+      { id: "vitamin_e", pct: 0.1 },
+    ]
+  },
+  {
+    id: "susan_base", name: "Susan's Base Formula", source: "Swift Crafty Monkey / Windy Point",
+    description: "Susan Barclay-Nichols' classic hot-melt formula. Professional approach.",
+    ingredients: [
+      { id: "sci", pct: 30 }, { id: "slsa", pct: 35 }, { id: "capb", pct: 25 },
+      { id: "btms_50", pct: 3 }, { id: "sodium_lactate", pct: 3 },
+      { id: "hydrolyzed_rice_protein", pct: 1.5 }, { id: "panthenol", pct: 1 },
+      { id: "fragrance", pct: 1 }, { id: "germall_plus", pct: 0.5 },
+    ]
+  },
+  // ── NEW TEMPLATES v2.1 ──
+  {
+    id: "more_mango", name: "More Mango (75% Solid)", source: "Humble Bee & Me",
+    description: "Updated Mango Mango. 75% solid surfactants — extra hard, long-lasting. SCI+SLSa (or Bio-Terge). Cold press, easy dough.",
+    ingredients: [
+      { id: "sci", pct: 45 }, { id: "slsa", pct: 30 }, { id: "capb", pct: 13 },
+      { id: "cocoa_butter", pct: 9 }, { id: "pq7", pct: 1 },
+      { id: "fragrance", pct: 1 }, { id: "germall_plus", pct: 0.4 },
+      { id: "water_soluble_dye", pct: 0.6 },
+      // Note: original uses mango butter (swap cocoa butter for mango 1:1) + Bio-Terge AS90 (SLSa is recommended substitute)
+      // Remaining 3.5% can be adjusted — add oil, protein, or increase butter
+    ]
+  },
+  {
+    id: "french_green_clay", name: "French Green Clay (Non-ionic)", source: "Humble Bee & Me",
+    description: "Marie's 2020 original. Unique SCI+SLSa+non-ionic glucoside blend. No CAPB. Pressed or hand-moulded.",
+    ingredients: [
+      { id: "sci", pct: 49 }, { id: "slsa", pct: 21.1 }, { id: "iota_carrageenan", pct: 4 },
+      { id: "french_green_clay", pct: 5 }, { id: "decyl_glucoside", pct: 10 },
+      { id: "distilled_water", pct: 5 }, { id: "abyssinian", pct: 5 },
+      { id: "essential_oil", pct: 0.5 }, { id: "germall_plus", pct: 0.4 },
+    ]
+  },
+  {
+    id: "creamy_french_2025", name: "Creamy French 2025", source: "Humble Bee & Me",
+    description: "Updated French Green Clay. Guar gum replaces carrageenan. Marie's 2025 revision with refined wet/dry balance.",
+    ingredients: [
+      { id: "sci", pct: 49 }, { id: "slsa", pct: 20 }, { id: "guar_gum", pct: 3.5 },
+      { id: "french_green_clay", pct: 5 }, { id: "decyl_glucoside", pct: 10 },
+      { id: "distilled_water", pct: 6 }, { id: "jojoba", pct: 5 },
+      { id: "fragrance", pct: 1 }, { id: "citric_acid", pct: 0.1 },
+      { id: "germall_plus", pct: 0.4 },
+      // Note: original uses Caprylyl/Capryl Glucoside; Decyl Glucoside is Marie's recommended substitute
+    ]
+  },
+  {
+    id: "snowflake_conditioning", name: "Snowflake (SCI+SCS+BTMS-50)", source: "Humble Bee & Me",
+    description: "Marie's OG conditioning bar. SCI+SCS with BTMS-50 conditioner. Hot-melt required. Contains sulfate — not for color-treated hair.",
+    ingredients: [
+      { id: "sci", pct: 31.6 }, { id: "scs", pct: 26.3 }, { id: "capb", pct: 21.1 },
+      { id: "cocoa_butter", pct: 10.5 }, { id: "btms_50", pct: 8.4 },
+      { id: "stearic_acid", pct: 2.1 },
+      // Note: original uses tucuma butter (cocoa butter is workable sub). No preservative in original — ADD ONE. No fragrance — unscented.
+    ]
+  },
+  {
+    id: "gentle_sensitive", name: "Ultra-Gentle (Sensitive Scalp)", source: "Composite — Marie + Chemists Corner",
+    description: "Minimal surfactant load. SCI at max + sodium cocoamphoacetate (gentler than CAPB). Extra oils. For sensitive/irritated scalps.",
+    ingredients: [
+      { id: "sci", pct: 45 }, { id: "slsa", pct: 18 }, { id: "rice_flour", pct: 12 },
+      { id: "kaolin", pct: 5 }, { id: "sodium_cocoamphoacetate", pct: 8 },
+      { id: "jojoba", pct: 6 }, { id: "panthenol", pct: 2 },
+      { id: "hydrolyzed_rice_protein", pct: 2 }, { id: "citric_acid", pct: 0.25 },
+      { id: "optiphen_plus", pct: 1 }, { id: "essential_oil", pct: 0.75 },
+    ]
+  },
+];
+
+// ═══════════════════════════════════════════════════════════════
+// HAIR GOALS ADVISOR
+// ═══════════════════════════════════════════════════════════════
+const HAIR_GOALS = [
+  {
+    id: "bouncy_curls",
+    label: "🌀 Bouncy Light Curls",
+    description: "Defined, springy curls with volume and shine",
+    strategy: "Gentle cleansing (don't strip curl pattern), light conditioning (avoid weighing curls down), protein for bounce, humectant for moisture without heaviness.",
+    keyIngredients: [
+      { id: "sci", why: "Gentle cleansing won't strip natural oils that define curls", essential: true },
+      { id: "slsa", why: "Silky lather, works with SCI for good cleansing without harshness", essential: true },
+      { id: "capb", why: "Boosts foam, reduces irritation, helps form dough", essential: true },
+      { id: "hydrolyzed_rice_protein", why: "Lightweight protein — strengthens curl structure and adds bounce without weighing down", essential: true },
+      { id: "panthenol", why: "Humectant that penetrates hair shaft — adds moisture and shine to curls", essential: true },
+      { id: "jojoba", why: "Lightweight oil, similar to natural sebum — conditions without weighing curls down", essential: false },
+      { id: "rice_flour", why: "Filler/hardener — keeps bar solid", essential: true },
+      { id: "citric_acid", why: "pH adjuster — curly hair is sensitive to high pH (causes frizz!)", essential: true },
+    ],
+    avoidIngredients: ["cocoa_butter", "shea_butter", "castor", "btms_50", "stearic_acid"],
+    avoidReason: "Heavy butters, thick oils, and waxy conditioners weigh down curls and reduce bounce. Save BTMS-50 for a separate conditioner bar.",
+    phNote: "Critical for curls! pH above 6 lifts cuticle → frizz. Target pH 4.5–5.5. Always add citric acid and test pH.",
+    suggestedTemplate: "castor_rice",
+    tips: [
+      "Use this as shampoo only — follow with a separate light conditioner or leave-in for curls",
+      "Protein (rice, oat, quinoa) is your friend — it helps curls 'spring back'",
+      "Avoid heavy oils (castor, coconut) in the shampoo bar — they can weigh curls flat",
+      "Low pH is essential: curly hair cuticle opens easily at high pH → frizz city",
+    ],
+  },
+  {
+    id: "conditioning_bar",
+    label: "💧 Maximum Conditioning",
+    description: "Deep moisture, slip, softness — for dry or damaged hair",
+    strategy: "Include BTMS-50 (cationic conditioner that works in syndet systems), generous oils/butters, protein, and humectants. This bar does double duty.",
+    keyIngredients: [
+      { id: "sci", why: "Gentle anionic base — won't over-strip already dry hair", essential: true },
+      { id: "slsa", why: "Secondary surfactant for cleansing power and bar hardness", essential: true },
+      { id: "capb", why: "Mild amphoteric that boosts foam and reduces harshness", essential: true },
+      { id: "btms_50", why: "Cationic conditioner — deposits on hair, adds slip and detangling. Works in anhydrous syndet despite cationic+anionic rules", essential: true },
+      { id: "cocoa_butter", why: "Rich butter that helps condition and adds bar hardness", essential: false },
+      { id: "castor", why: "Thick, conditioning oil — said to strengthen hair", essential: false },
+      { id: "hydrolyzed_rice_protein", why: "Repairs damage, strengthens hair shaft", essential: true },
+      { id: "panthenol", why: "Penetrates hair, improves moisture retention and shine", essential: true },
+      { id: "glycerin", why: "Humectant — draws moisture. Keep under 2% in bars (stickiness)", essential: false },
+    ],
+    avoidIngredients: [],
+    avoidReason: "",
+    phNote: "BTMS-50 works best at pH 4–6. SCI's natural pH (4.5–6.5) is ideal. Add citric acid to fine-tune.",
+    suggestedTemplate: "snowflake_conditioning",
+    tips: [
+      "BTMS-50 already contains 75% cetearyl alcohol — don't add more cetearyl on top, use cetyl alcohol if you want extra hardness",
+      "This is effectively a 2-in-1 shampoo+conditioner bar",
+      "Hot-melt method needed for BTMS-50 — melt at ≥70°C for proper crystal formation (Susan/Swift Crafty Monkey)",
+      "Freeze bars after molding — helps crystal structure (Swift Crafty Monkey tip)",
+      "Some pro formulators prefer oil-free shampoo + separate conditioner bar — this is the combined approach",
+    ],
+  },
+  {
+    id: "shampoo_conditioner",
+    label: "🧴 Shampoo + Conditioner 2-in-1",
+    description: "One bar that cleans AND conditions — minimal shower routine",
+    strategy: "Same as conditioning bar but balanced. BTMS-50 is the key ingredient that makes '2-in-1' work in syndet bars. Moderate oils, good protein.",
+    keyIngredients: [
+      { id: "sci", why: "Primary gentle cleanser", essential: true },
+      { id: "slsa", why: "Secondary cleanser + bar hardness", essential: true },
+      { id: "capb", why: "Mild co-surfactant", essential: true },
+      { id: "btms_50", why: "THE conditioning agent — deposits on hair during rinse. Up to 7% in syndet bars", essential: true },
+      { id: "hydrolyzed_rice_protein", why: "Strengthens and conditions", essential: true },
+      { id: "panthenol", why: "Moisture + shine", essential: true },
+      { id: "jojoba", why: "Light conditioning oil", essential: false },
+      { id: "sodium_lactate", why: "Hardening agent — compensates for BTMS-50 softening", essential: false },
+    ],
+    avoidIngredients: ["decyl_glucoside"],
+    avoidReason: "Decyl glucoside weakens bars (Chemists Corner: 7 trials). Bar hardness already challenged by conditioning agents.",
+    phNote: "Target pH 5–6. BTMS-50 and SCI both work well in this range.",
+    suggestedTemplate: "snowflake_conditioning",
+    tips: [
+      "Think of this as 'conditioning shampoo' not 'conditioner that cleans' — cleansing comes first",
+      "BTMS-50 at 5–7% gives noticeable conditioning. Below 3% is subtle",
+      "Add sodium lactate (3%) for hardness — Susan's formula uses this",
+      "May not replace standalone conditioner for very dry/damaged hair",
+      "Hot-melt method required — must reach ≥70°C",
+    ],
+  },
+  {
+    id: "clarifying",
+    label: "✨ Clarifying / Deep Clean",
+    description: "Remove buildup, product residue, hard water deposits",
+    strategy: "Strong cleansing surfactant blend, bentonite clay (adsorbs impurities), activated charcoal. Minimal oils. A weekly-use bar.",
+    keyIngredients: [
+      { id: "slsa", why: "Strong, effective cleanser — SLSa as primary gives more cleansing power than SCI-first", essential: true },
+      { id: "sci", why: "Secondary surfactant — adds density to lather", essential: true },
+      { id: "capb", why: "Boosts foam + tempers harshness of strong surfactant load", essential: true },
+      { id: "bentonite", why: "Adsorbs oils, minerals, and product buildup — the key clarifying clay", essential: true },
+      { id: "activated_charcoal", why: "Super-absorbent, boosts clarifying power", essential: false },
+      { id: "hydrolyzed_rice_protein", why: "Counteracts potential dryness from strong cleansing", essential: true },
+      { id: "citric_acid", why: "pH control — essential when using high surfactant loads", essential: true },
+    ],
+    avoidIngredients: ["cocoa_butter", "shea_butter"],
+    avoidReason: "Heavy butters defeat the purpose of clarifying — you're trying to remove buildup, not add it.",
+    phNote: "Watch pH carefully with bentonite — it's alkaline. Citric acid is essential. Test pH of diluted bar.",
+    suggestedTemplate: "charcoal_clarifying",
+    tips: [
+      "This is a weekly/biweekly bar — daily use will over-strip most hair types",
+      "Bentonite is NOT interchangeable with kaolin/French clay (different absorption capacity)",
+      "Marie: 'Do not substitute the bentonite clay or activated charcoal'",
+      "Follow with a conditioning treatment after clarifying",
+      "Keep oils minimal (2–3%) — just enough to prevent hair feeling like straw",
+    ],
+  },
+  {
+    id: "color_safe",
+    label: "🎨 Color-Safe / Gentle",
+    description: "Won't strip color-treated or chemically processed hair",
+    strategy: "Avoid sulfates entirely (no SCS!). Use only sulfate-free surfactants at moderate levels. Extra conditioning. Low pH is critical — high pH opens cuticle and releases color.",
+    keyIngredients: [
+      { id: "sci", why: "Sulfate-free, gentle, naturally mildly acidic pH (4.5–6.5) — ideal for color-treated hair", essential: true },
+      { id: "slsa", why: "Sulfate-free secondary surfactant. ECO-CERT. Won't strip color", essential: true },
+      { id: "capb", why: "Mild co-surfactant, boosts foam without harshness", essential: true },
+      { id: "panthenol", why: "Helps repair color-processing damage, adds shine", essential: true },
+      { id: "hydrolyzed_rice_protein", why: "Strengthens color-weakened hair shaft", essential: true },
+      { id: "jojoba", why: "Lightweight conditioning — color-treated hair needs moisture", essential: false },
+      { id: "citric_acid", why: "pH control — CRITICAL for color-treated hair. pH must be ≤6", essential: true },
+      { id: "vitamin_e", why: "Antioxidant — helps protect color from UV degradation", essential: false },
+    ],
+    avoidIngredients: ["scs"],
+    avoidReason: "Sodium Coco Sulfate (SCS) is a sulfate — it strips color. Marie explicitly warns against SCS for color-treated hair.",
+    phNote: "CRITICAL: pH must be 4.5–5.5. Higher pH opens cuticle and releases color molecules. Add citric acid. Always test pH.",
+    suggestedTemplate: "castor_rice",
+    tips: [
+      "Marie notes her SCI+SLSa bars are sulfate-free and safe for color",
+      "pH is the #1 factor for color retention — lower is better (within reason)",
+      "Consider adding silk amino acids (if available) for extra cuticle smoothing",
+      "Avoid SCS entirely — community reports of blonde color stripping",
+      "Use this bar with a color-safe conditioner for best results",
+    ],
+  },
+  {
+    id: "volume_fine",
+    label: "🌿 Volume for Fine Hair",
+    description: "Lightweight cleansing that doesn't weigh down fine hair",
+    strategy: "Clean effectively without heavy conditioning agents. Kaolin clay adds body. Minimal oil. Protein for strength. Light surfactant blend.",
+    keyIngredients: [
+      { id: "sci", why: "Gentle primary cleanser", essential: true },
+      { id: "slsa", why: "Creates silky voluminous lather — SLSa is great for fine hair", essential: true },
+      { id: "capb", why: "Flash foam — instant volume in lather", essential: true },
+      { id: "kaolin", why: "White kaolin adds body and absorbs excess oil without stripping", essential: true },
+      { id: "rice_flour", why: "Natural starch that creates light, clean feeling", essential: true },
+      { id: "hydrolyzed_rice_protein", why: "Lightweight protein — strengthens fine hair without heaviness", essential: true },
+      { id: "panthenol", why: "Adds body and shine to fine hair", essential: false },
+    ],
+    avoidIngredients: ["cocoa_butter", "shea_butter", "castor", "btms_50", "glycerin", "stearic_acid"],
+    avoidReason: "Heavy butters, thick oils, BTMS-50, and glycerin will weigh fine hair flat. Less is more for fine hair.",
+    phNote: "Standard pH 5–6 works well. Fine hair is less pH-sensitive than curly hair.",
+    suggestedTemplate: "simple_sulfate_free",
+    tips: [
+      "Fine hair + heavy conditioning = flat, limp results",
+      "The 'Simple Sulfate-Free' template is already excellent for fine hair — it's minimal and clean",
+      "If you want body, increase kaolin (up to 8%) or add a small amount of corn starch",
+      "Keep total oils/butters under 5%",
+      "Don't condition the scalp — only condition mid-lengths to ends",
+    ],
+  },
+  {
+    id: "oily_scalp",
+    label: "🫧 Oily Scalp / Frequent Wash",
+    description: "Effective cleansing for oily hair, designed for regular use",
+    strategy: "Strong surfactant blend with good cleansing power. Clay to absorb oil. Minimal added oils. But still gentle enough for frequent use.",
+    keyIngredients: [
+      { id: "slsa", why: "Excellent cleansing — use as primary surfactant for oily hair", essential: true },
+      { id: "sci", why: "Secondary surfactant, adds bar hardness and creamy lather", essential: true },
+      { id: "capb", why: "Boosts foam, helps balance cleansing strength", essential: true },
+      { id: "kaolin", why: "Oil-absorbing clay — helps control excess sebum", essential: true },
+      { id: "corn_starch", why: "Absorbs oil, adds bar hardness", essential: false },
+      { id: "citric_acid", why: "pH control for scalp health", essential: true },
+    ],
+    avoidIngredients: ["castor", "cocoa_butter", "shea_butter", "glycerin"],
+    avoidReason: "Skip heavy oils and humectants — oily scalps produce enough sebum already. Glycerin attracts moisture and can make oily hair look greasier.",
+    phNote: "Slightly lower pH (4.5–5.5) can help regulate sebum production. Add citric acid.",
+    suggestedTemplate: "ice_palace",
+    tips: [
+      "SLSa as primary (instead of SCI) gives stronger cleansing for oily hair",
+      "The Ice Palace template with its 4-surfactant blend cleans very effectively",
+      "Charcoal Clarifying is another great option for very oily hair",
+      "Some pro formulators say: keep shampoo bar oil-free, save oils for conditioner",
+      "French green clay or bentonite (in moderation) can help with excess oil",
+    ],
+  },
+];
+
+const goalMap = Object.fromEntries(HAIR_GOALS.map(g => [g.id, g]));
+
+const ingredientMap = Object.fromEntries(INGREDIENTS.map(i => [i.id, i]));
+
+// ═══════════════════════════════════════════════════════════════
+// CONSTRAINT ENGINE — v2
+// ═══════════════════════════════════════════════════════════════
+
+function validateFormulation(items) {
+  const warnings = [], errors = [], info = [];
+  const total = items.reduce((s, i) => s + i.pct, 0);
+
+  // ── Total check ──
+  if (Math.abs(total - 100) > 0.5) {
+    const diff = total - 100;
+    const direction = diff > 0 ? "over" : "under";
+    errors.push({
+      msg: `Total is ${total.toFixed(1)}% — ${Math.abs(diff).toFixed(1)}% ${direction}. All ingredients are percentages of the final bar and must add up to 100%. Use ⚖ Balance to auto-fix.`,
+      sev: "error",
+      fixable: "balance"
+    });
+  }
+  else if (Math.abs(total - 100) > 0.05) warnings.push({ msg: `Total is ${total.toFixed(2)}% — should be exactly 100%`, sev: "warn", fixable: "balance" });
+
+  // ── Per-ingredient limits ──
+  for (const item of items) {
+    const ing = ingredientMap[item.id];
+    if (!ing || item.pct === 0) continue;
+    if (item.pct > ing.maxPct) errors.push({ msg: `${ing.name.split("(")[0].trim()}: ${item.pct}% exceeds max ${ing.maxPct}%${ing.maxNote ? ` — ${ing.maxNote}` : ""}`, sev: "error" });
+    if (item.pct > 0 && item.pct < ing.minPct) warnings.push({ msg: `${ing.name.split("(")[0].trim()}: ${item.pct}% below recommended min ${ing.minPct}%`, sev: "warn" });
+  }
+
+  // ── Preservative check ──
+  const hasPreservative = items.some(i => ingredientMap[i.id]?.slot === "PRESERVATIVE" && i.pct > 0);
+  if (!hasPreservative) errors.push({ msg: "No preservative! Water-containing bars MUST have broad-spectrum preservation.", sev: "error" });
+
+  // ── Solid surfactant hardness ──
+  const solidSurf = items.filter(i => {
+    const g = ingredientMap[i.id];
+    return g && g.phase === "dry" && g.surfactantType === "anionic";
+  }).reduce((s, i) => s + i.pct, 0);
+  if (solidSurf < 50 && total > 95) warnings.push({ msg: `Solid surfactants total ${solidSurf.toFixed(1)}% — bars may be soft. 55%+ recommended.`, sev: "warn" });
+
+  // ── Dry/wet ratio ──
+  const dryPct = items.filter(i => ingredientMap[i.id]?.phase === "dry").reduce((s, i) => s + i.pct, 0);
+  if (dryPct < 55 && total > 95) warnings.push({ msg: `Dry phase is ${dryPct.toFixed(1)}% — bar may be too wet/soft. 60%+ recommended.`, sev: "warn" });
+  if (dryPct > 85 && total > 95) warnings.push({ msg: `Dry phase is ${dryPct.toFixed(1)}% — dough may be crumbly. Below 80% is easier.`, sev: "warn" });
+
+  // ── pH assessment ──
+  const hasVeryBasic = items.some(i => ingredientMap[i.id]?.phContribution === "very_basic" && i.pct > 0);
+  const hasBasic = items.some(i => ingredientMap[i.id]?.phContribution === "basic" && i.pct > 0);
+  const hasAcid = items.some(i => ingredientMap[i.id]?.slot === "PH_ADJUSTER" && i.pct > 0);
+  if (hasVeryBasic && !hasAcid) warnings.push({ msg: "Contains very basic ingredient (Decyl Glucoside pH~11). pH adjuster essential — add citric or lactic acid.", sev: "warn" });
+  else if (hasBasic && !hasAcid) warnings.push({ msg: "Contains basic ingredient (SCS pH~9.5). pH adjuster recommended — add citric or lactic acid.", sev: "warn" });
+
+  // ── Oil check ──
+  const oilPct = items.filter(i => ingredientMap[i.id]?.slot === "OIL_BUTTER").reduce((s, i) => s + i.pct, 0);
+  if (oilPct > 12) warnings.push({ msg: `Oil/butter at ${oilPct.toFixed(1)}% — bars may be soft. Pro advice: save oils for conditioner (Chemists Corner).`, sev: "warn" });
+  if (oilPct === 0 && total > 95) info.push({ msg: "No oil/butter — some pro formulators prefer this (saves conditioning for conditioner bars), but bar may feel more stripping.", sev: "info" });
+
+  // ── Decyl glucoside weakening warning ──
+  const dg = items.find(i => i.id === "decyl_glucoside" && i.pct > 0);
+  if (dg) warnings.push({ msg: `Decyl Glucoside at ${dg.pct}% — ⚠ Chemists Corner finding: weakens bars even at 2% (7 trials). Consider CAPB instead if bar hardness matters.`, sev: "warn" });
+
+  // ── Glycerin warning ──
+  const gly = items.find(i => i.id === "glycerin" && i.pct > 2);
+  if (gly) warnings.push({ msg: `Glycerin at ${gly.pct}% — pro formulators warn >2% can make bars sticky/soft. Consider reducing.`, sev: "warn" });
+
+  // ── Starch preservation warning ──
+  const hasStarch = items.some(i => ingredientMap[i.id]?.tags?.includes("starch") && i.pct > 0);
+  const hasWater = items.some(i => (ingredientMap[i.id]?.waterContent || 0) > 0 && i.pct > 0);
+  if (hasStarch && hasWater) info.push({ msg: "Starch + water: 'It's All In My Hands' warns starch is 'food' for microbes — preservation system must work extra hard. Ensure good broad-spectrum preservative.", sev: "info" });
+
+  // ── Needs heat detection ──
+  const needsHeat = items.some(i => {
+    const g = ingredientMap[i.id];
+    return g && (g.state === "solid_noodle" || g.state === "solid_brittle" || g.state === "solid_waxy") && i.pct > 0;
+  });
+  if (needsHeat) info.push({ msg: "Formula contains ingredients needing heat (≥70°C). Swift Crafty Monkey: proper melting temperature critical for crystal formation → hard, shiny bars. Freeze bars after molding.", sev: "info" });
+
+  // ── ASM intensity check ──
+  const totalASM = items.reduce((s, i) => {
+    const g = ingredientMap[i.id];
+    return s + (g?.asm ? i.pct * g.asm : 0);
+  }, 0);
+  if (totalASM > 75) info.push({ msg: `Active Surfactant Matter is ${totalASM.toFixed(1)}% — on the high end. 'It's All In My Hands' notes: very concentrated bars can be more irritating than liquid shampoo due to direct scalp contact.`, sev: "info" });
+
+  return { errors, warnings, info };
+}
+
+function computeProperties(items) {
+  let totalWater = 0, dryPct = 0, wetPct = 0, solidSurf = 0, totalSurf = 0, oilPct = 0, totalASM = 0;
+  const latherProfiles = {}, surfTypes = {};
+  let needsHeat = false;
+  const total = items.reduce((s, i) => s + i.pct, 0);
+
+  for (const item of items) {
+    const g = ingredientMap[item.id];
+    if (!g || item.pct === 0) continue;
+    totalWater += (item.pct / 100) * (g.waterContent || 0) * 100;
+    if (g.phase === "dry") dryPct += item.pct; else wetPct += item.pct;
+    if (g.surfactantType && g.surfactantType !== "cationic") {
+      totalSurf += item.pct;
+      surfTypes[g.surfactantType] = (surfTypes[g.surfactantType] || 0) + item.pct;
+    }
+    if (g.phase === "dry" && g.surfactantType === "anionic") solidSurf += item.pct;
+    if (g.slot === "OIL_BUTTER") oilPct += item.pct;
+    if (g.asm) totalASM += item.pct * g.asm;
+    if (g.latherProfile) latherProfiles[g.latherProfile] = (latherProfiles[g.latherProfile] || 0) + item.pct;
+    if (g.state === "solid_noodle" || g.state === "solid_brittle" || g.state === "solid_waxy") needsHeat = true;
+  }
+
+  const topLather = Object.entries(latherProfiles).sort((a, b) => b[1] - a[1]).map(([k]) => k.replace(/_/g, " "));
+
+  // pH estimate
+  const hasVeryBasic = items.some(i => ingredientMap[i.id]?.phContribution === "very_basic" && i.pct > 0);
+  const hasBasic = items.some(i => ingredientMap[i.id]?.phContribution === "basic" && i.pct > 0);
+  const hasAcid = items.some(i => ingredientMap[i.id]?.slot === "PH_ADJUSTER" && i.pct > 0);
+  let phEst = "~5–6 ✓";
+  if (hasVeryBasic && !hasAcid) phEst = "⚠ >8 — add acid";
+  else if (hasVeryBasic && hasAcid) phEst = "~5–7 — verify";
+  else if (hasBasic && !hasAcid) phEst = "~7–9 — probably high";
+  else if (hasBasic && hasAcid) phEst = "~5–6 — verify";
+
+  return {
+    totalWater: totalWater.toFixed(1), dryPct: dryPct.toFixed(1), wetPct: wetPct.toFixed(1),
+    solidSurf: solidSurf.toFixed(1), totalSurf: totalSurf.toFixed(1), oilPct: oilPct.toFixed(1),
+    totalASM: totalASM.toFixed(1), topLather, surfTypes, needsHeat, phEst,
+    dryWetRatio: total > 10 ? `${dryPct.toFixed(0)}:${wetPct.toFixed(0)}` : "—",
+    method: needsHeat ? "Hot Process (melt ≥70°C)" : "Cold Press (no heat)",
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STYLES
+// ═══════════════════════════════════════════════════════════════
+const C = {
+  bg: "#ffffff", s1: "#f8f9fa", s2: "#f0f2f5", s3: "#e8eaed",
+  b1: "#dce0e5", b2: "#c4cad2",
+  t1: "#1a1d21", t2: "#4a5260", t3: "#8892a0",
+  acc: "#2e8b68", accDim: "#236b50",
+  dry: "#3a6db5", wet: "#b87a3a",
+  warn: "#b08520", warnBg: "#fef9ec",
+  err: "#c03030", errBg: "#fdf0f0",
+  info: "#3070b8", infoBg: "#eef4fc",
+  asm: "#9050b0",
+};
+
+// ═══════════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════════
+const UNITS = {
+  g: { label: "g", factor: 1 },
+  oz: { label: "oz", factor: 1 / 28.3495 },
+  lb: { label: "lb", factor: 1 / 453.592 },
+};
+const toUnit = (grams, unit) => (grams * UNITS[unit].factor);
+const fromUnit = (val, unit) => (val / UNITS[unit].factor);
+
+function SyndetFormulator() {
+  const [items, setItems] = useState([]);
+  const [selTemplate, setSelTemplate] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [search, setSearch] = useState("");
+  const [filterSlot, setFilterSlot] = useState("ALL");
+  const [selIng, setSelIng] = useState(null);
+  const [batchSize, setBatchSize] = useState(100);
+  const [unit, setUnit] = useState("g");
+  const [anchorId, setAnchorId] = useState(null);
+  const [selGoal, setSelGoal] = useState(null);
+  // ── Recipe management ──
+  const [recipeName, setRecipeName] = useState("Untitled Shampoo Bar");
+  const [recipeNotes, setRecipeNotes] = useState("");
+  const [savedRecipes, setSavedRecipes] = useState([]);
+  const [showSaved, setShowSaved] = useState(false);
+  const [showPrint, setShowPrint] = useState(false);
+
+  const loadTemplate = useCallback((t) => {
+    setItems(t.ingredients.map(i => ({ ...i }))); setSelTemplate(t.id); setSelIng(null); setShowAdd(false);
+  }, []);
+  const addIng = useCallback((id) => {
+    if (items.find(i => i.id === id)) return;
+    const g = ingredientMap[id];
+    let newPct = g.fixedPct || Math.min(5, g.maxPct);
+    const companions = (g.companions || []);
+    const missing = companions.filter(c => !items.some(i => i.id === c.id) && c.id !== id);
+
+    setItems(p => {
+      let next = [...p, { id, pct: newPct }];
+      missing.forEach(c => {
+        const cIng = ingredientMap[c.id];
+        if (cIng && !next.some(i => i.id === c.id)) next.push({ id: c.id, pct: c.pct });
+      });
+      return next;
+    });
+    setShowAdd(false); setSearch("");
+
+    if (missing.length > 0) {
+      const names = missing.map(c => {
+        const ci = ingredientMap[c.id];
+        return `${ci ? ci.name.split("(")[0].trim() : c.id} (${c.pct}%) — ${c.reason}`;
+      });
+      setSwapNotice({ added: names, newName: g.name.split("(")[0].trim() });
+      setTimeout(() => setSwapNotice(null), 8000);
+    }
+  }, [items]);
+  const removeIng = useCallback((id) => {
+    setItems(p => p.filter(i => i.id !== id)); if (selIng === id) setSelIng(null);
+  }, [selIng]);
+  const updatePct = useCallback((id, v) => {
+    setItems(p => p.map(i => i.id === id ? { ...i, pct: Math.max(0, Math.round(v * 100) / 100) } : i));
+  }, []);
+
+  // When user types a weight value for an ingredient, recalculate batch size
+  const updateWeight = useCallback((id, weightInUnit) => {
+    const weightGrams = fromUnit(weightInUnit, unit);
+    const item = items.find(i => i.id === id);
+    if (!item || item.pct <= 0) return;
+    // batch = weight / (pct/100)
+    const newBatch = weightGrams / (item.pct / 100);
+    setBatchSize(Math.max(1, Math.round(newBatch * 10) / 10));
+    setAnchorId(id);
+  }, [items, unit]);
+
+  const toggleAnchor = useCallback((id) => {
+    setAnchorId(prev => prev === id ? null : id);
+  }, []);
+
+  // ── Save recipe ──
+  const saveRecipe = useCallback(() => {
+    const recipe = {
+      id: Date.now().toString(36),
+      name: recipeName || "Untitled",
+      notes: recipeNotes,
+      items: items.map(i => ({ ...i })),
+      batchSize, unit, selGoal,
+      savedAt: new Date().toISOString(),
+    };
+    setSavedRecipes(prev => {
+      const existing = prev.findIndex(r => r.name === recipe.name);
+      if (existing >= 0) { const next = [...prev]; next[existing] = recipe; return next; }
+      return [recipe, ...prev];
+    });
+    setShowSaved(true);
+  }, [recipeName, recipeNotes, items, batchSize, unit, selGoal]);
+
+  // ── Load saved recipe ──
+  const loadSavedRecipe = useCallback((recipe) => {
+    setRecipeName(recipe.name);
+    setRecipeNotes(recipe.notes || "");
+    setItems(recipe.items.map(i => ({ ...i })));
+    setBatchSize(recipe.batchSize || 100);
+    setUnit(recipe.unit || "g");
+    setSelGoal(recipe.selGoal || null);
+    setShowSaved(false);
+    setSelTemplate(null);
+  }, []);
+
+  // ── Delete saved recipe ──
+  const deleteSavedRecipe = useCallback((id) => {
+    setSavedRecipes(prev => prev.filter(r => r.id !== id));
+  }, []);
+
+  // ── Reset formula ──
+  const resetFormula = useCallback(() => {
+    setItems([]); setSelTemplate(null); setSelIng(null); setShowAdd(false);
+    setSelGoal(null); setAnchorId(null); setSearch(""); setFilterSlot("ALL");
+    setRecipeName("Untitled Shampoo Bar"); setRecipeNotes("");
+  }, []);
+
+  // ── Balance to 100% ──
+  // Proportionally scales all ingredients so they sum to exactly 100%.
+  // Preservatives/pH adjusters with fixedPct are held at their fixed value;
+  // everything else is scaled to fill the remaining space.
+  const balanceTo100 = useCallback(() => {
+    if (items.length === 0) return;
+    const curTotal = items.reduce((s, i) => s + i.pct, 0);
+    if (Math.abs(curTotal - 100) < 0.05) return; // already balanced
+
+    // Separate fixed (preservatives, pH adjusters) from flexible
+    const fixed = [];
+    const flex = [];
+    items.forEach(i => {
+      const g = ingredientMap[i.id];
+      if (g && g.fixedPct && Math.abs(i.pct - g.fixedPct) < 0.5) {
+        fixed.push(i);
+      } else {
+        flex.push(i);
+      }
+    });
+
+    const fixedTotal = fixed.reduce((s, i) => s + i.pct, 0);
+    const flexTotal = flex.reduce((s, i) => s + i.pct, 0);
+    const target = 100 - fixedTotal;
+
+    if (flexTotal <= 0 || target <= 0) {
+      // Fallback: scale everything
+      const scale = 100 / curTotal;
+      setItems(prev => prev.map(i => ({ ...i, pct: Math.round(i.pct * scale * 100) / 100 })));
+    } else {
+      const scale = target / flexTotal;
+      setItems(prev => prev.map(i => {
+        const g = ingredientMap[i.id];
+        if (g && g.fixedPct && Math.abs(i.pct - g.fixedPct) < 0.5) return i; // keep fixed
+        const newPct = Math.round(i.pct * scale * 100) / 100;
+        return { ...i, pct: Math.max(0.01, newPct) };
+      }));
+    }
+  }, [items]);
+
+  // ── Smart swap notification ──
+  const [swapNotice, setSwapNotice] = useState(null);
+
+  // ── Smart swap: replace ingredient + auto-add companions ──
+  const smartSwap = useCallback((oldId, newId) => {
+    const oldItem = items.find(i => i.id === oldId);
+    const newIng = ingredientMap[newId];
+    if (!oldItem || !newIng) return;
+
+    let newPct = Math.min(oldItem.pct, newIng.maxPct);
+    const companions = (newIng.companions || []);
+    // Find which companions are missing from formula
+    const missing = companions.filter(c => !items.some(i => i.id === c.id) && c.id !== oldId);
+    const totalCompPct = missing.reduce((s, c) => s + c.pct, 0);
+
+    // Make room: reduce the new ingredient's pct
+    if (totalCompPct > 0) {
+      newPct = Math.max(newIng.minPct, newPct - totalCompPct);
+    }
+
+    setItems(prev => {
+      let next = prev.map(i => i.id === oldId ? { id: newId, pct: Math.round(newPct * 100) / 100 } : i);
+      // Add missing companions
+      missing.forEach(c => {
+        const cIng = ingredientMap[c.id];
+        if (cIng) next.push({ id: c.id, pct: c.pct });
+      });
+      return next;
+    });
+    setSelIng(newId);
+
+    // Show notice
+    if (missing.length > 0) {
+      const names = missing.map(c => {
+        const ci = ingredientMap[c.id];
+        return `${ci ? ci.name.split("(")[0].trim() : c.id} (${c.pct}%) — ${c.reason}`;
+      });
+      setSwapNotice({ added: names, newName: newIng.name.split("(")[0].trim() });
+      setTimeout(() => setSwapNotice(null), 8000);
+    }
+  }, [items]);
+
+  const validation = useMemo(() => validateFormulation(items), [items]);
+  const props = useMemo(() => computeProperties(items), [items]);
+  const total = useMemo(() => items.reduce((s, i) => s + i.pct, 0), [items]);
+
+  const available = useMemo(() => {
+    const used = new Set(items.map(i => i.id));
+    return INGREDIENTS.filter(i => {
+      if (used.has(i.id)) return false;
+      if (filterSlot !== "ALL" && i.slot !== filterSlot && i.alsoSlot !== filterSlot) return false;
+      if (search) {
+        const s = search.toLowerCase();
+        return i.name.toLowerCase().includes(s) || i.tags?.some(t => t.includes(s)) || i.description.toLowerCase().includes(s) || i.slot.toLowerCase().includes(s);
+      }
+      return true;
+    });
+  }, [items, filterSlot, search]);
+
+  const sel = selIng ? ingredientMap[selIng] : null;
+  const slotKeys = Object.keys(FUNCTIONAL_SLOTS);
+
+  // ── PRINT / RECIPE VIEW ──
+  if (showPrint) {
+    const dryItems = items.filter(i => ingredientMap[i.id]?.phase === "dry" && i.pct > 0);
+    const wetItems = items.filter(i => ingredientMap[i.id]?.phase !== "dry" && i.pct > 0);
+    const totalASM = items.reduce((s, i) => { const g = ingredientMap[i.id]; return s + (g?.asm ? i.pct * g.asm : 0); }, 0);
+    const processMethod = items.some(i => { const g = ingredientMap[i.id]; return g && (g.state === "solid_noodle" || g.state === "solid_brittle" || g.state === "solid_waxy") && i.pct > 0; }) ? "Hot Process (melt ≥70°C)" : "Cold Press (no heat)";
+    return (
+      <div id="print-recipe" style={{ fontFamily: "'IBM Plex Mono', 'SF Mono', monospace", background: "#fff", color: "#1a1a1a", minHeight: "100vh", padding: "32px 40px", maxWidth: 750, margin: "0 auto" }}>
+        <style>{`
+          @media print {
+            body { background: #fff !important; }
+            #print-recipe { padding: 20px 0 !important; }
+            .no-print { display: none !important; }
+            .check-row input[type="checkbox"] { width: 16px; height: 16px; }
+          }
+          .check-row:hover { background: #f5f5f5; }
+          .check-row input:checked + span { text-decoration: line-through; opacity: 0.5; }
+        `}</style>
+
+        {/* Back button + Print button */}
+        <div className="no-print" style={{ display: "flex", gap: 10, marginBottom: 24 }}>
+          <button onClick={() => setShowPrint(false)} style={{ padding: "8px 16px", fontSize: 13, border: "2px solid #1a1a1a", borderRadius: 4, background: "transparent", cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>← Back to Formulator</button>
+          <button onClick={() => window.print()} style={{ padding: "8px 16px", fontSize: 13, border: "2px solid #1a1a1a", borderRadius: 4, background: "#1a1a1a", color: "#fff", cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>🖨 Print Recipe</button>
+        </div>
+
+        {/* Title */}
+        <div style={{ borderBottom: "3px solid #1a1a1a", paddingBottom: 16, marginBottom: 24 }}>
+          <h1 style={{ fontSize: 28, fontWeight: 800, margin: 0, letterSpacing: "-0.03em" }}>{recipeName}</h1>
+          <div style={{ fontSize: 12, color: "#666", marginTop: 4, display: "flex", gap: 16 }}>
+            <span>Batch: {toUnit(batchSize, unit).toFixed(unit === "g" ? 0 : 2)} {UNITS[unit].label}</span>
+            <span>·</span>
+            <span>~{Math.round(batchSize / 100)} bar{Math.round(batchSize / 100) !== 1 ? "s" : ""} (est. 100g ea)</span>
+            <span>·</span>
+            <span>{processMethod}</span>
+          </div>
+          {selGoal && goalMap[selGoal] && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Goal: {goalMap[selGoal].label}</div>}
+          {recipeNotes && <div style={{ fontSize: 12, color: "#444", marginTop: 8, fontStyle: "italic", lineHeight: 1.5 }}>{recipeNotes}</div>}
+        </div>
+
+        {/* Properties summary */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 24, padding: "12px 16px", background: "#f8f8f8", borderRadius: 6 }}>
+          {[
+            { l: "Total ASM", v: `${totalASM.toFixed(1)}%` },
+            { l: "Dry:Wet", v: props.dryWetRatio },
+            { l: "pH Est.", v: props.phEst },
+            { l: "Lather", v: props.topLather?.slice(0, 2).join(", ") || "—" },
+          ].map(({ l, v }, i) => (
+            <div key={i}>
+              <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em", color: "#999", marginBottom: 2 }}>{l}</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{v}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* DRY PHASE */}
+        <h2 style={{ fontSize: 14, textTransform: "uppercase", letterSpacing: "0.1em", color: "#4466aa", borderBottom: "1px solid #ddd", paddingBottom: 6, marginBottom: 12 }}>
+          ▧ Dry Phase ({dryItems.reduce((s, i) => s + i.pct, 0).toFixed(1)}%)
+        </h2>
+        {dryItems.map(item => {
+          const g = ingredientMap[item.id];
+          if (!g) return null;
+          const wt = toUnit(item.pct * batchSize / 100, unit);
+          return (
+            <label key={item.id} className="check-row" style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 4px", cursor: "pointer", borderBottom: "1px solid #f0f0f0" }}>
+              <input type="checkbox" style={{ width: 16, height: 16, flexShrink: 0, accentColor: "#4466aa" }} />
+              <span style={{ flex: 1, fontSize: 13, transition: "all 0.2s" }}>
+                <strong>{g.name}</strong>
+              </span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#4466aa", minWidth: 60, textAlign: "right" }}>
+                {wt.toFixed(unit === "g" ? 1 : 2)} {UNITS[unit].label}
+              </span>
+              <span style={{ fontSize: 11, color: "#999", minWidth: 42, textAlign: "right" }}>{item.pct}%</span>
+            </label>
+          );
+        })}
+
+        {/* WET PHASE */}
+        <h2 style={{ fontSize: 14, textTransform: "uppercase", letterSpacing: "0.1em", color: "#aa7744", borderBottom: "1px solid #ddd", paddingBottom: 6, margin: "20px 0 12px" }}>
+          ▨ Wet Phase ({wetItems.reduce((s, i) => s + i.pct, 0).toFixed(1)}%)
+        </h2>
+        {wetItems.map(item => {
+          const g = ingredientMap[item.id];
+          if (!g) return null;
+          const wt = toUnit(item.pct * batchSize / 100, unit);
+          return (
+            <label key={item.id} className="check-row" style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 4px", cursor: "pointer", borderBottom: "1px solid #f0f0f0" }}>
+              <input type="checkbox" style={{ width: 16, height: 16, flexShrink: 0, accentColor: "#aa7744" }} />
+              <span style={{ flex: 1, fontSize: 13, transition: "all 0.2s" }}>
+                <strong>{g.name}</strong>
+              </span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#aa7744", minWidth: 60, textAlign: "right" }}>
+                {wt.toFixed(unit === "g" ? 1 : 2)} {UNITS[unit].label}
+              </span>
+              <span style={{ fontSize: 11, color: "#999", minWidth: 42, textAlign: "right" }}>{item.pct}%</span>
+            </label>
+          );
+        })}
+
+        {/* Total */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 4px", borderTop: "2px solid #1a1a1a", marginTop: 4, fontWeight: 700 }}>
+          <span style={{ flex: 1, fontSize: 14 }}>TOTAL</span>
+          <span style={{ fontSize: 14, minWidth: 60, textAlign: "right" }}>{toUnit(batchSize, unit).toFixed(unit === "g" ? 1 : 2)} {UNITS[unit].label}</span>
+          <span style={{ fontSize: 12, color: "#999", minWidth: 42, textAlign: "right" }}>{total.toFixed(1)}%</span>
+        </div>
+
+        {/* Instructions */}
+        <div style={{ marginTop: 28, padding: "16px 20px", border: "1px solid #ddd", borderRadius: 6 }}>
+          <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 10px" }}>Method</h3>
+          <div style={{ fontSize: 12, lineHeight: 1.8, color: "#333" }}>
+            <label className="check-row" style={{ display: "flex", gap: 8, padding: "3px 0", cursor: "pointer" }}>
+              <input type="checkbox" style={{ marginTop: 3, accentColor: "#1a1a1a" }} />
+              <span>Put on dust mask and nitrile gloves. Weigh dry phase ingredients into a bowl. Stir until uniform.</span>
+            </label>
+            <label className="check-row" style={{ display: "flex", gap: 8, padding: "3px 0", cursor: "pointer" }}>
+              <input type="checkbox" style={{ marginTop: 3, accentColor: "#1a1a1a" }} />
+              <span>{processMethod.includes("Hot") ? "Melt solid ingredients at ≥70°C. Combine wet phase ingredients. Add wet to melted solids." : "Combine wet phase ingredients. Make a well in dry phase and add wet ingredients."}</span>
+            </label>
+            <label className="check-row" style={{ display: "flex", gap: 8, padding: "3px 0", cursor: "pointer" }}>
+              <input type="checkbox" style={{ marginTop: 3, accentColor: "#1a1a1a" }} />
+              <span>Blend thoroughly with gloved hands until uniform, smooth dough forms.</span>
+            </label>
+            <label className="check-row" style={{ display: "flex", gap: 8, padding: "3px 0", cursor: "pointer" }}>
+              <input type="checkbox" style={{ marginTop: 3, accentColor: "#1a1a1a" }} />
+              <span>Shape bars by hand, mould, or press. {processMethod.includes("Hot") ? "Freeze bars after molding (helps crystal formation)." : ""}</span>
+            </label>
+            <label className="check-row" style={{ display: "flex", gap: 8, padding: "3px 0", cursor: "pointer" }}>
+              <input type="checkbox" style={{ marginTop: 3, accentColor: "#1a1a1a" }} />
+              <span>Leave to dry 3–5 days minimum (longer in humid climates). Test pH of 10% dilution — target 4.5–6.</span>
+            </label>
+          </div>
+        </div>
+
+        {/* Warnings */}
+        {(validation.errors.length + validation.warnings.length > 0) && (
+          <div style={{ marginTop: 20, padding: "12px 16px", background: "#fff8f0", border: "1px solid #eeddcc", borderRadius: 6 }}>
+            <h3 style={{ fontSize: 12, textTransform: "uppercase", margin: "0 0 8px", color: "#996633" }}>Notes & Warnings</h3>
+            {[...validation.errors, ...validation.warnings].map((v, i) => (
+              <div key={i} style={{ fontSize: 11, color: v.sev === "error" ? "#cc3333" : "#996633", marginBottom: 4, lineHeight: 1.5 }}>
+                {v.sev === "error" ? "✕ " : "△ "}{v.msg}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Footer */}
+        <div style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd", fontSize: 10, color: "#bbb", display: "flex", justifyContent: "space-between" }}>
+          <span>◈ Syndet Bar Formulator v2.3</span>
+          <span>{new Date().toLocaleDateString()}</span>
+        </div>
+      </div>
+    );
+  }
+
+  // ── MAIN FORMULATOR RENDER ──
+  return (
+    <div style={{ fontFamily: "'IBM Plex Sans', 'SF Pro Text', system-ui, sans-serif", background: C.bg, color: C.t1, height: "100vh", display: "flex", flexDirection: "column", fontSize: 13 }}>
+
+      {/* HEADER */}
+      <div style={{ padding: "12px 20px 10px", borderBottom: `1px solid ${C.b1}`, background: C.s1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <h1 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: C.acc, letterSpacing: "-0.03em" }}>◈ Syndet Bar Formulator</h1>
+          <span style={{ fontSize: 10, color: C.t3, textTransform: "uppercase", letterSpacing: "0.08em" }}>v2.4</span>
+          <div style={{ flex: 1 }} />
+          {/* Action buttons */}
+          <button onClick={resetFormula} title="Reset — start a new recipe" style={{
+            padding: "4px 10px", fontSize: 10, fontWeight: 600, border: `1px solid ${C.b1}`,
+            borderRadius: 3, background: "transparent", color: C.t2, cursor: "pointer",
+          }}>⟲ Reset</button>
+          <button onClick={saveRecipe} disabled={items.length === 0} title="Save recipe" style={{
+            padding: "4px 10px", fontSize: 10, fontWeight: 600, border: `1px solid ${C.b1}`,
+            borderRadius: 3, background: "transparent", color: items.length ? C.t2 : C.t3,
+            cursor: items.length ? "pointer" : "default", opacity: items.length ? 1 : 0.4,
+          }}>💾 Save</button>
+          <button onClick={() => setShowSaved(!showSaved)} style={{
+            padding: "4px 10px", fontSize: 10, fontWeight: 600, border: `1px solid ${showSaved ? C.acc : C.b1}`,
+            borderRadius: 3, background: showSaved ? C.accDim + "30" : "transparent",
+            color: showSaved ? C.acc : C.t2, cursor: "pointer",
+          }}>📂 Saved{savedRecipes.length > 0 ? ` (${savedRecipes.length})` : ""}</button>
+          <button onClick={() => setShowPrint(true)} disabled={items.length === 0} title="View printable recipe" style={{
+            padding: "4px 10px", fontSize: 10, fontWeight: 600, border: `1px solid ${C.b1}`,
+            borderRadius: 3, background: "transparent", color: items.length ? C.t2 : C.t3,
+            cursor: items.length ? "pointer" : "default", opacity: items.length ? 1 : 0.4,
+          }}>🖨 Recipe</button>
+        </div>
+        {/* Recipe name input */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+          <input value={recipeName} onChange={e => setRecipeName(e.target.value)} placeholder="Name your recipe..."
+            style={{ flex: 1, padding: "4px 8px", fontSize: 13, fontWeight: 600, background: "transparent",
+              border: `1px solid transparent`, borderRadius: 3, color: C.t1, outline: "none",
+              borderColor: "transparent",
+            }}
+            onFocus={e => e.target.style.borderColor = C.b1}
+            onBlur={e => e.target.style.borderColor = "transparent"}
+          />
+          <span style={{ fontSize: 10, color: C.t3 }}>
+            Sources: Marie · Susan · Chemists Corner · Joan Morais
+          </span>
+        </div>
+      </div>
+
+      {/* Saved recipes drawer */}
+      {showSaved && (
+        <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.b1}`, background: C.s2, maxHeight: 200, overflow: "auto" }}>
+          {savedRecipes.length === 0 ? (
+            <div style={{ fontSize: 11, color: C.t3, textAlign: "center", padding: 10 }}>No saved recipes yet. Save your first recipe!</div>
+          ) : savedRecipes.map(r => (
+            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", borderRadius: 3, marginBottom: 2 }}
+              onMouseOver={e => e.currentTarget.style.background = C.s3} onMouseOut={e => e.currentTarget.style.background = "transparent"}>
+              <div style={{ flex: 1, cursor: "pointer" }} onClick={() => loadSavedRecipe(r)}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.t1 }}>{r.name}</div>
+                <div style={{ fontSize: 9, color: C.t3 }}>
+                  {r.items.length} ingredients · {r.batchSize}g
+                  {r.selGoal && goalMap[r.selGoal] ? ` · ${goalMap[r.selGoal].label}` : ""}
+                  · saved {new Date(r.savedAt).toLocaleDateString()}
+                </div>
+              </div>
+              <button onClick={() => deleteSavedRecipe(r.id)} style={{ background: "none", border: "none", color: C.t3, cursor: "pointer", fontSize: 12, opacity: 0.5 }}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        {/* ══════ LEFT PANEL ══════ */}
+        <div style={{ flex: "1 1 440px", display: "flex", flexDirection: "column", borderRight: `1px solid ${C.b1}`, minWidth: 0 }}>
+
+          {/* Scrollable content area */}
+          <div style={{ flex: 1, overflow: "auto" }}>
+
+          {/* Templates */}
+          <div style={{ padding: "10px 14px 6px", borderBottom: `1px solid ${C.b1}`, background: C.s1 }}>
+            <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: C.t3, marginBottom: 6 }}>Start from template</div>
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              {TEMPLATES.map(t => (
+                <button key={t.id} onClick={() => { loadTemplate(t); setSelGoal(null); }} title={`${t.source}: ${t.description}`} style={{
+                  padding: "4px 8px", fontSize: 10, border: `1px solid ${selTemplate === t.id ? C.acc : C.b1}`,
+                  borderRadius: 3, background: selTemplate === t.id ? C.accDim + "30" : "transparent",
+                  color: selTemplate === t.id ? C.acc : C.t2, cursor: "pointer", whiteSpace: "nowrap",
+                }}>
+                  {t.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Hair Goals Advisor */}
+          <div style={{ borderBottom: `1px solid ${C.b1}`, background: C.s1 }}>
+            <div style={{ padding: "6px 14px", display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: C.t3, marginRight: 4 }}>I want…</span>
+              {HAIR_GOALS.map(g => (
+                <button key={g.id} onClick={() => setSelGoal(selGoal === g.id ? null : g.id)} style={{
+                  padding: "3px 7px", fontSize: 10, border: `1px solid ${selGoal === g.id ? "#8856a8" : C.b1}`,
+                  borderRadius: 3, background: selGoal === g.id ? "#8856a820" : "transparent",
+                  color: selGoal === g.id ? "#8856a8" : C.t2, cursor: "pointer", whiteSpace: "nowrap",
+                }}>
+                  {g.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Goal detail panel */}
+            {selGoal && goalMap[selGoal] && (() => {
+              const g = goalMap[selGoal];
+              const suggested = TEMPLATES.find(t => t.id === g.suggestedTemplate);
+              return (
+                <div style={{ padding: "0 14px 10px", fontSize: 11, lineHeight: 1.6 }}>
+                  <div style={{ padding: "8px 10px", borderRadius: 4, background: C.s2, border: `1px solid ${C.b1}` }}>
+                    {/* Strategy */}
+                    <div style={{ fontWeight: 600, color: "#8856a8", marginBottom: 4 }}>{g.description}</div>
+                    <div style={{ color: C.t2, marginBottom: 8, fontSize: 11 }}>{g.strategy}</div>
+
+                    {/* Key Ingredients */}
+                    <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em", color: C.t3, marginBottom: 4 }}>Key Ingredients</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 8 }}>
+                      {g.keyIngredients.map(ki => {
+                        const ing = ingredientMap[ki.id];
+                        if (!ing) return null;
+                        return (
+                          <div key={ki.id} style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 10 }}>
+                            <span style={{ color: ki.essential ? C.acc : C.t3, fontWeight: ki.essential ? 600 : 400, flexShrink: 0 }}>
+                              {ki.essential ? "✦" : "○"} {ing.name.split("(")[0].trim()}
+                            </span>
+                            <span style={{ color: C.t3, fontSize: 9 }}>— {ki.why}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Avoid */}
+                    {g.avoidIngredients.length > 0 && (
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em", color: C.warn, marginBottom: 3 }}>Avoid</div>
+                        <div style={{ color: C.t2, fontSize: 10 }}>
+                          {g.avoidIngredients.map(id => ingredientMap[id]?.name.split("(")[0].trim()).filter(Boolean).join(", ")}
+                          {g.avoidReason && <span style={{ color: C.t3 }}> — {g.avoidReason}</span>}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* pH Note */}
+                    <div style={{ padding: "5px 8px", borderRadius: 3, background: C.infoBg, border: `1px solid ${C.info}30`, marginBottom: 8 }}>
+                      <span style={{ fontWeight: 600, color: C.info, fontSize: 9, textTransform: "uppercase" }}>pH: </span>
+                      <span style={{ fontSize: 10, color: C.t2 }}>{g.phNote}</span>
+                    </div>
+
+                    {/* Tips */}
+                    <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.08em", color: C.t3, marginBottom: 3 }}>Pro Tips</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 8 }}>
+                      {g.tips.map((tip, i) => (
+                        <div key={i} style={{ fontSize: 10, color: C.t2, paddingLeft: 10, textIndent: -10 }}>→ {tip}</div>
+                      ))}
+                    </div>
+
+                    {/* Suggested template button */}
+                    {suggested && (
+                      <button onClick={() => { loadTemplate(suggested); }} style={{
+                        padding: "5px 12px", fontSize: 10, fontWeight: 600,
+                        border: `1px solid ${C.acc}`, borderRadius: 3,
+                        background: C.accDim + "30", color: C.acc, cursor: "pointer",
+                      }}>
+                        Load Suggested: {suggested.name}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Ingredient list */}
+          <div style={{ padding: "4px 0" }}>
+            {items.length === 0 ? (
+              <div style={{ padding: "40px 20px", textAlign: "center", color: C.t3 }}>
+                <div style={{ fontSize: 24, marginBottom: 8, opacity: 0.4 }}>◇</div>
+                <div style={{ fontSize: 12 }}>Choose a template or add ingredients</div>
+              </div>
+            ) : items.map(item => {
+              const g = ingredientMap[item.id];
+              if (!g) return null;
+              const over = item.pct > g.maxPct;
+              const isSel = selIng === item.id;
+              const isAnc = anchorId === item.id;
+              const asmVal = g.asm ? (item.pct * g.asm).toFixed(1) : null;
+              const weightVal = toUnit(item.pct * batchSize / 100, unit);
+              return (
+                <div key={item.id} onClick={() => setSelIng(isSel ? null : item.id)} style={{
+                  display: "flex", alignItems: "center", gap: 4, padding: "5px 10px 5px 14px", cursor: "pointer",
+                  background: isSel ? C.s2 : "transparent",
+                  borderLeft: isSel ? `2px solid ${C.acc}` : "2px solid transparent",
+                }}>
+                  <div style={{ width: 5, height: 5, borderRadius: "50%", flexShrink: 0, background: g.phase === "dry" ? C.dry : C.wet, opacity: 0.7 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 11, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: over ? C.err : C.t1 }}>
+                      {g.name.split("(")[0].trim()}
+                    </div>
+                    <div style={{ fontSize: 9, color: C.t3, display: "flex", gap: 8 }}>
+                      <span>{FUNCTIONAL_SLOTS[g.slot]?.icon} {FUNCTIONAL_SLOTS[g.slot]?.name}</span>
+                      {asmVal && <span style={{ color: C.asm }}>ASM {asmVal}%</span>}
+                    </div>
+                  </div>
+                  {/* % input */}
+                  <input type="number" value={item.pct} onChange={e => { e.stopPropagation(); updatePct(item.id, parseFloat(e.target.value) || 0); }}
+                    onClick={e => e.stopPropagation()} step={0.25} min={0} max={100}
+                    style={{ width: 50, padding: "2px 4px", fontSize: 11, textAlign: "right", background: C.bg, border: `1px solid ${over ? C.err : C.b1}`, borderRadius: 3, color: over ? C.err : C.t1, outline: "none" }}
+                  />
+                  <span style={{ fontSize: 9, color: C.t3, width: 10 }}>%</span>
+                  {/* Weight input — editable! typing here recalculates batch size */}
+                  <input type="number" value={parseFloat(weightVal.toFixed(unit === "g" ? 1 : 2))}
+                    onChange={e => { e.stopPropagation(); updateWeight(item.id, parseFloat(e.target.value) || 0); }}
+                    onClick={e => e.stopPropagation()} step={unit === "g" ? 0.5 : 0.01} min={0}
+                    style={{
+                      width: 52, padding: "2px 4px", fontSize: 11, textAlign: "right",
+                      background: isAnc ? C.acc + "15" : C.bg,
+                      border: `1px solid ${isAnc ? C.acc : C.b1}`, borderRadius: 3,
+                      color: isAnc ? C.acc : C.t2, outline: "none",
+                    }}
+                  />
+                  <span style={{ fontSize: 9, color: isAnc ? C.acc : C.t3, width: 14 }}>{UNITS[unit].label}</span>
+                  {/* Anchor button */}
+                  <button onClick={e => { e.stopPropagation(); toggleAnchor(item.id); }} title={isAnc ? "Unpin (stop anchoring batch size to this ingredient)" : "Pin: type a weight here to set batch size"}
+                    style={{ background: "none", border: "none", color: isAnc ? C.acc : C.t3, cursor: "pointer", fontSize: 10, padding: "0 1px", opacity: isAnc ? 1 : 0.35 }}>
+                    {isAnc ? "⚓" : "⚓"}
+                  </button>
+                  {g.substitutes?.length > 0 && <span style={{ fontSize: 8, color: C.acc, opacity: 0.5 }}>↔{g.substitutes.length}</span>}
+                  <button onClick={e => { e.stopPropagation(); removeIng(item.id); }} style={{ background: "none", border: "none", color: C.t3, cursor: "pointer", fontSize: 13, padding: "0 2px", opacity: 0.4 }}>×</button>
+                </div>
+              );
+            })}
+          </div>
+          </div>{/* end scrollable content area */}
+
+          {/* Bottom bar */}
+          <div style={{ padding: "6px 14px", borderTop: `1px solid ${C.b1}`, background: C.s1, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: Math.abs(total - 100) < 0.5 ? C.acc : C.err }}>{total.toFixed(2)}%</span>
+            {Math.abs(total - 100) > 0.5 && (
+              <button onClick={balanceTo100} title="Proportionally scale all ingredients to total 100%" style={{
+                padding: "2px 7px", fontSize: 9, fontWeight: 600, border: `1px solid ${C.err}`,
+                borderRadius: 2, background: "transparent", color: C.err, cursor: "pointer",
+              }}>⚖</button>
+            )}
+            <div style={{ width: 60, height: 3, background: C.b1, borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ width: `${Math.min(100, total)}%`, height: "100%", background: Math.abs(total - 100) < 0.5 ? C.acc : total > 100 ? C.err : C.warn, transition: "all 0.2s" }} />
+            </div>
+            {/* Unit selector */}
+            <div style={{ display: "flex", gap: 1, borderRadius: 3, overflow: "hidden", border: `1px solid ${C.b1}` }}>
+              {Object.keys(UNITS).map(u => (
+                <button key={u} onClick={() => setUnit(u)} style={{
+                  padding: "2px 7px", fontSize: 9, fontWeight: 600, border: "none", cursor: "pointer",
+                  background: unit === u ? C.acc : C.bg, color: unit === u ? C.bg : C.t3,
+                  textTransform: "uppercase", letterSpacing: "0.05em",
+                }}>
+                  {u}
+                </button>
+              ))}
+            </div>
+            {/* Batch size */}
+            <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+              <span style={{ fontSize: 9, color: C.t3 }}>Batch:</span>
+              <input type="number" value={parseFloat(toUnit(batchSize, unit).toFixed(unit === "g" ? 0 : 2))}
+                onChange={e => setBatchSize(Math.max(1, fromUnit(parseFloat(e.target.value) || 100, unit)))}
+                style={{ width: 52, padding: "2px 4px", fontSize: 10, background: C.bg, border: `1px solid ${C.b1}`, borderRadius: 2, color: C.t2, textAlign: "right", outline: "none" }} />
+              <span style={{ fontSize: 9, color: C.t3 }}>{UNITS[unit].label}</span>
+            </div>
+            {/* Anchor hint */}
+            {anchorId && (
+              <span style={{ fontSize: 8, color: C.acc, opacity: 0.7 }}>
+                ⚓ {ingredientMap[anchorId]?.name.split("(")[0].trim()}
+              </span>
+            )}
+            <div style={{ flex: 1 }} />
+            <button onClick={() => setShowAdd(!showAdd)} style={{
+              padding: "4px 10px", fontSize: 10, fontWeight: 600, border: `1px solid ${C.acc}`, borderRadius: 3,
+              background: showAdd ? C.acc : "transparent", color: showAdd ? C.bg : C.acc, cursor: "pointer",
+            }}>
+              {showAdd ? "Close" : "+ Add"}
+            </button>
+          </div>
+
+          {/* Add panel */}
+          {showAdd && (
+            <div style={{ padding: "10px 14px", borderTop: `1px solid ${C.b1}`, background: C.s1, maxHeight: 260, overflow: "auto" }}>
+              <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…" autoFocus
+                  style={{ flex: 1, padding: "4px 7px", fontSize: 11, background: C.bg, border: `1px solid ${C.b1}`, borderRadius: 3, color: C.t1, outline: "none" }} />
+                <select value={filterSlot} onChange={e => setFilterSlot(e.target.value)}
+                  style={{ padding: "4px 5px", fontSize: 10, background: C.bg, border: `1px solid ${C.b1}`, borderRadius: 3, color: C.t2 }}>
+                  <option value="ALL">All slots</option>
+                  {slotKeys.map(k => <option key={k} value={k}>{FUNCTIONAL_SLOTS[k].name}</option>)}
+                </select>
+              </div>
+              {available.length === 0 ? <div style={{ fontSize: 10, color: C.t3, padding: "6px 0" }}>No matches.</div> :
+                available.map(g => (
+                  <div key={g.id} onClick={() => addIng(g.id)} style={{ padding: "5px 6px", cursor: "pointer", borderRadius: 3, marginBottom: 1, display: "flex", alignItems: "center", gap: 6 }}
+                    onMouseOver={e => e.currentTarget.style.background = C.s2} onMouseOut={e => e.currentTarget.style.background = "transparent"}>
+                    <div style={{ width: 5, height: 5, borderRadius: "50%", background: g.phase === "dry" ? C.dry : C.wet, opacity: 0.7 }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 10, fontWeight: 500 }}>{g.name}</div>
+                      <div style={{ fontSize: 9, color: C.t3 }}>{FUNCTIONAL_SLOTS[g.slot]?.name} · {g.minPct}–{g.maxPct}%{g.asm ? ` · ASM ${(g.asm * 100).toFixed(0)}%` : ""} · {toUnit(g.maxPct * batchSize / 100, unit).toFixed(unit === "g" ? 1 : 2)}{UNITS[unit].label} max</div>
+                    </div>
+                    <span style={{ fontSize: 9, color: C.acc }}>+ add</span>
+                  </div>
+                ))
+              }
+            </div>
+          )}
+        </div>
+
+        {/* ══════ RIGHT PANEL ══════ */}
+        <div style={{ flex: "1 1 400px", overflow: "auto", minWidth: 0 }}>
+
+          {/* Smart swap notice */}
+          {swapNotice && (
+            <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.b1}`, background: C.acc + "12" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: C.acc }}>↔ Smart Swap</span>
+                <span style={{ fontSize: 9, color: C.t3 }}>Auto-added companion ingredients:</span>
+                <div style={{ flex: 1 }} />
+                <button onClick={() => setSwapNotice(null)} style={{ background: "none", border: "none", color: C.t3, cursor: "pointer", fontSize: 11 }}>×</button>
+              </div>
+              {swapNotice.added.map((a, i) => (
+                <div key={i} style={{ padding: "4px 8px", fontSize: 10, lineHeight: 1.5, borderRadius: 3, background: C.acc + "15", color: C.acc, marginBottom: 2, borderLeft: `2px solid ${C.acc}40` }}>
+                  + {a}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Validation */}
+          {(validation.errors.length + validation.warnings.length + validation.info.length > 0) && (
+            <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.b1}` }}>
+              <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: C.t3, marginBottom: 6 }}>Validation</div>
+              {[...validation.errors, ...validation.warnings, ...validation.info].map((v, i) => (
+                <div key={i} style={{
+                  padding: "5px 8px", marginBottom: 3, borderRadius: 3, fontSize: 10, lineHeight: 1.5,
+                  background: v.sev === "error" ? C.errBg : v.sev === "warn" ? C.warnBg : C.infoBg,
+                  color: v.sev === "error" ? C.err : v.sev === "warn" ? C.warn : C.info,
+                  borderLeft: `2px solid ${v.sev === "error" ? C.err : v.sev === "warn" ? C.warn : C.info}`,
+                }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+                    <div style={{ flex: 1 }}>
+                      {v.sev === "error" ? "✕ " : v.sev === "warn" ? "△ " : "○ "}{v.msg}
+                    </div>
+                    {v.fixable === "balance" && (
+                      <button onClick={balanceTo100} style={{
+                        padding: "2px 8px", fontSize: 9, fontWeight: 600, whiteSpace: "nowrap",
+                        border: `1px solid ${v.sev === "error" ? C.err : C.warn}`,
+                        borderRadius: 2, background: "transparent",
+                        color: v.sev === "error" ? C.err : C.warn, cursor: "pointer",
+                      }}>⚖ Balance</button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Goal-aware checks */}
+          {selGoal && goalMap[selGoal] && items.length > 0 && (() => {
+            const g = goalMap[selGoal];
+            const present = items.filter(i => g.avoidIngredients.includes(i.id) && i.pct > 0);
+            const missingEssential = g.keyIngredients.filter(ki => ki.essential && !items.some(i => i.id === ki.id && i.pct > 0));
+            if (present.length === 0 && missingEssential.length === 0) return null;
+            return (
+              <div style={{ padding: "6px 14px 10px", borderBottom: `1px solid ${C.b1}` }}>
+                <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: "#8856a8", marginBottom: 5 }}>
+                  Goal Check: {g.label}
+                </div>
+                {present.map(i => (
+                  <div key={i.id} style={{ padding: "4px 8px", marginBottom: 2, borderRadius: 3, fontSize: 10, background: C.warnBg, color: C.warn, borderLeft: `2px solid ${C.warn}` }}>
+                    △ {ingredientMap[i.id]?.name.split("(")[0].trim()} at {i.pct}% — not recommended for this goal. {g.avoidReason}
+                  </div>
+                ))}
+                {missingEssential.map(ki => (
+                  <div key={ki.id} style={{ padding: "4px 8px", marginBottom: 2, borderRadius: 3, fontSize: 10, background: C.infoBg, color: C.info, borderLeft: `2px solid ${C.info}` }}>
+                    ○ Missing: {ingredientMap[ki.id]?.name.split("(")[0].trim()} — {ki.why}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
+          {/* Properties + ASM */}
+          {items.length > 0 && (
+            <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.b1}` }}>
+              <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: C.t3, marginBottom: 8 }}>Formulation Properties</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                {[
+                  { l: "Dry : Wet Ratio", v: props.dryWetRatio },
+                  { l: "Solid Surfactants", v: `${props.solidSurf}%` },
+                  { l: "Total Surfactants", v: `${props.totalSurf}%` },
+                  { l: "Oil / Butter", v: `${props.oilPct}%` },
+                  { l: "Est. Water Content", v: `${props.totalWater}%` },
+                  { l: "Process Method", v: props.method },
+                  { l: `Total Batch`, v: `${toUnit(batchSize, unit).toFixed(unit === "g" ? 0 : 2)} ${UNITS[unit].label}` },
+                  { l: "Bars (est. ~100g ea)", v: `~${Math.round(batchSize / 100)}` },
+                ].map(({ l, v }, i) => (
+                  <div key={i} style={{ padding: "5px 7px", background: C.s1, borderRadius: 3 }}>
+                    <div style={{ fontSize: 9, color: C.t3 }}>{l}</div>
+                    <div style={{ fontSize: 12, fontWeight: 500 }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* ASM — the new key metric */}
+              <div style={{ marginTop: 8, padding: "8px 8px", background: C.s1, borderRadius: 3, border: `1px solid ${C.asm}25` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <div style={{ fontSize: 9, color: C.asm, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 600 }}>Active Surfactant Matter (ASM)</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: C.asm }}>{props.totalASM}%</div>
+                </div>
+                <div style={{ width: "100%", height: 6, background: C.bg, borderRadius: 3, overflow: "hidden", marginBottom: 4 }}>
+                  <div style={{
+                    width: `${Math.min(100, (parseFloat(props.totalASM) / 85) * 100)}%`, height: "100%", borderRadius: 3,
+                    background: `linear-gradient(90deg, ${C.acc}, ${C.asm})`,
+                  }} />
+                </div>
+                <div style={{ fontSize: 9, color: C.t3, lineHeight: 1.5 }}>
+                  Syndet bars: 55–85% ASM typical (It's All In My Hands). Higher = more cleansing power but potentially more irritating.
+                  {Object.entries(props.surfTypes).length > 0 && (
+                    <span> Blend: {Object.entries(props.surfTypes).map(([t, p]) => `${t} ${p.toFixed(0)}%`).join(", ")}.</span>
+                  )}
+                </div>
+              </div>
+
+              {/* pH + Lather */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 6 }}>
+                <div style={{ padding: "6px 8px", background: C.s1, borderRadius: 3 }}>
+                  <div style={{ fontSize: 9, color: C.t3, marginBottom: 2 }}>pH Estimate</div>
+                  <div style={{ fontSize: 11, color: props.phEst.includes("⚠") ? C.warn : C.acc }}>{props.phEst}</div>
+                  <div style={{ fontSize: 8, color: C.t3, marginTop: 2 }}>Always verify with 10% dilution test</div>
+                </div>
+                {props.topLather.length > 0 && (
+                  <div style={{ padding: "6px 8px", background: C.s1, borderRadius: 3 }}>
+                    <div style={{ fontSize: 9, color: C.t3, marginBottom: 2 }}>Lather Character</div>
+                    <div style={{ fontSize: 11 }}>{props.topLather.join(" + ")}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Selected ingredient detail + substitutions */}
+          {sel ? (
+            <div style={{ padding: "10px 14px" }}>
+              <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: C.t3, marginBottom: 6 }}>Ingredient Detail</div>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{sel.name}</div>
+              <div style={{ fontSize: 10, color: C.t2, lineHeight: 1.6, marginBottom: 6 }}>{sel.description}</div>
+              {sel.processNote && <div style={{ fontSize: 10, color: C.info, lineHeight: 1.5, marginBottom: 6, padding: "4px 8px", background: C.infoBg, borderRadius: 3 }}>🔧 {sel.processNote}</div>}
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 10 }}>
+                {[
+                  { l: "Slot", v: FUNCTIONAL_SLOTS[sel.slot]?.name },
+                  { l: "Phase", v: sel.phase, c: sel.phase === "dry" ? C.dry : C.wet },
+                  { l: "Range", v: `${sel.minPct}–${sel.maxPct}%` },
+                  sel.asm && { l: "ASM", v: `${(sel.asm * 100).toFixed(0)}%`, c: C.asm },
+                  sel.surfactantType && { l: "Type", v: sel.surfactantType },
+                  sel.phContribution !== "neutral" && sel.phContribution !== "varies" && { l: "pH", v: `~${sel.phApprox}` },
+                  sel.waterContent > 0 && { l: "Water", v: `~${(sel.waterContent * 100).toFixed(0)}%` },
+                ].filter(Boolean).map(({ l, v, c }, i) => (
+                  <span key={i} style={{ padding: "2px 6px", fontSize: 9, borderRadius: 2, background: (c || C.t3) + "15", color: c || C.t2, border: `1px solid ${(c || C.t3)}20` }}>
+                    {l}: {v}
+                  </span>
+                ))}
+              </div>
+
+              {/* SUBSTITUTIONS */}
+              {sel.substitutes?.length > 0 && (
+                <>
+                  <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: C.acc, marginBottom: 6, fontWeight: 700 }}>↔ Substitutions ({sel.substitutes.length})</div>
+                  {sel.substitutes.map(sid => {
+                    const sub = ingredientMap[sid];
+                    if (!sub) return null;
+                    const inFormula = items.some(i => i.id === sid);
+                    const note = sel.subNotes?.[sid];
+                    return (
+                      <div key={sid} style={{ padding: "6px 8px", marginBottom: 4, borderRadius: 3, background: C.s1, border: `1px solid ${C.b1}` }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+                          <span style={{ fontSize: 11, fontWeight: 500 }}>{sub.name.split("(")[0].trim()}</span>
+                          {!inFormula ? (
+                            <button onClick={() => smartSwap(selIng, sid)} style={{ padding: "2px 8px", fontSize: 9, border: `1px solid ${C.acc}`, borderRadius: 2, background: "transparent", color: C.acc, cursor: "pointer" }}>
+                              ↔ Swap
+                            </button>
+                          ) : <span style={{ fontSize: 9, color: C.t3 }}>in formula</span>}
+                        </div>
+                        {note && <div style={{ fontSize: 10, lineHeight: 1.5, padding: "3px 6px", borderRadius: 2, background: C.acc + "10", color: C.acc, borderLeft: `2px solid ${C.acc}30`, marginBottom: 3 }}>{note}</div>}
+                        <div style={{ display: "flex", gap: 4 }}>
+                          {[
+                            { l: "Range", v: `${sub.minPct}–${sub.maxPct}%` },
+                            sub.asm && { l: "ASM", v: `${(sub.asm * 100).toFixed(0)}%` },
+                            sub.phApprox && sub.phContribution !== "neutral" && { l: "pH", v: `~${sub.phApprox}` },
+                          ].filter(Boolean).map(({ l, v }, i) => (
+                            <span key={i} style={{ padding: "1px 5px", fontSize: 8, borderRadius: 2, background: C.b1, color: C.t3 }}>{l}: {v}</span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+              {sel.substitutes?.length === 0 && sel.tags?.includes("no-easy-sub") && (
+                <div style={{ fontSize: 10, color: C.warn, padding: "6px 8px", background: C.warnBg, borderRadius: 3, lineHeight: 1.5 }}>
+                  △ No easy substitutes — unique properties.
+                </div>
+              )}
+            </div>
+          ) : items.length > 0 && (
+            <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.b1}` }}>
+              {/* Phase visualization when nothing selected */}
+              <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: C.t3, marginBottom: 8 }}>Phase Breakdown</div>
+              {["dry", "wet"].map(phase => {
+                const pi = items.filter(i => ingredientMap[i.id]?.phase === phase && i.pct > 0).sort((a, b) => b.pct - a.pct);
+                const pp = pi.reduce((s, i) => s + i.pct, 0);
+                return (
+                  <div key={phase} style={{ marginBottom: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                      <div style={{ width: 7, height: 7, borderRadius: "50%", background: phase === "dry" ? C.dry : C.wet }} />
+                      <span style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", color: phase === "dry" ? C.dry : C.wet }}>
+                        {phase} — {pp.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", height: 14, borderRadius: 2, overflow: "hidden", background: C.bg, gap: 1 }}>
+                      {pi.map(item => {
+                        const w = total > 0 ? (item.pct / total) * 100 : 0;
+                        if (w < 0.3) return null;
+                        return (
+                          <div key={item.id} title={`${ingredientMap[item.id]?.name}: ${item.pct}%`}
+                            onClick={() => setSelIng(item.id)}
+                            style={{ width: `${w}%`, height: "100%", background: phase === "dry" ? C.dry : C.wet, opacity: 0.3 + (item.pct / 60) * 0.7, cursor: "pointer" }}
+                            onMouseOver={e => e.currentTarget.style.opacity = 1} onMouseOut={e => e.currentTarget.style.opacity = 0.3 + (item.pct / 60) * 0.7}
+                          />
+                        );
+                      })}
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "1px 8px", marginTop: 3 }}>
+                      {pi.map(item => (
+                        <span key={item.id} style={{ fontSize: 8, color: C.t3, cursor: "pointer" }} onClick={() => setSelIng(item.id)}>
+                          {ingredientMap[item.id]?.name.split("(")[0].trim().substring(0, 22)} {item.pct}%
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+
+              <div style={{ fontSize: 10, color: C.t3, textAlign: "center", marginTop: 8 }}>Click any ingredient for details & substitutions</div>
+            </div>
+          )}
+
+          {/* Recipe Notes */}
+          {items.length > 0 && (
+            <div style={{ padding: "10px 14px", borderTop: `1px solid ${C.b1}` }}>
+              <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: C.t3, marginBottom: 4 }}>Recipe Notes</div>
+              <textarea value={recipeNotes} onChange={e => setRecipeNotes(e.target.value)}
+                placeholder="Add notes about this recipe — process tips, substitutions tried, hair type, results..."
+                style={{
+                  width: "100%", minHeight: 60, padding: "6px 8px", fontSize: 11, lineHeight: 1.5,
+                  background: C.bg, border: `1px solid ${C.b1}`, borderRadius: 3, color: C.t2,
+                  outline: "none", resize: "vertical", fontFamily: "inherit",
+                  boxSizing: "border-box",
+                }}
+                onFocus={e => e.target.style.borderColor = C.acc}
+                onBlur={e => e.target.style.borderColor = C.b1}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
