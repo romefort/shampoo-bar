@@ -28,7 +28,7 @@
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useMemo, useCallback, useRef } = React;
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
 // ═══════════════════════════════════════════════════════════════
 // INGREDIENT KNOWLEDGE GRAPH — v2
@@ -1242,6 +1242,60 @@ const UNITS = {
 const toUnit = (grams, unit) => (grams * UNITS[unit].factor);
 const fromUnit = (val, unit) => (val / UNITS[unit].factor);
 
+// ═══════════════════════════════════════════════════════════════
+// PERSISTENCE — localStorage + URL sharing
+// ═══════════════════════════════════════════════════════════════
+const STORAGE_KEYS = {
+  SAVED: "syndet_saved_recipes",
+  DRAFT: "syndet_draft",
+  PREFS: "syndet_prefs",
+  PANTRY: "syndet_pantry",
+};
+
+const storageGet = (key, fallback) => {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
+  catch { return fallback; }
+};
+const storageSet = (key, value) => {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+};
+const storageRemove = (key) => {
+  try { localStorage.removeItem(key); } catch {}
+};
+
+const encodeRecipeToHash = (recipe) => {
+  try {
+    const compact = {
+      n: recipe.name,
+      o: recipe.notes || "",
+      g: recipe.selGoal || null,
+      i: recipe.items.map(x => [x.id, x.pct]),
+    };
+    const json = JSON.stringify(compact);
+    const encoded = btoa(unescape(encodeURIComponent(json)));
+    return encoded;
+  } catch { return null; }
+};
+
+const decodeRecipeFromHash = (encoded) => {
+  try {
+    const json = decodeURIComponent(escape(atob(encoded)));
+    const compact = JSON.parse(json);
+    if (!compact.i || !Array.isArray(compact.i)) return null;
+    const items = compact.i.map(([id, pct]) => {
+      if (!ingredientMap[id]) return null;
+      return { id, pct: Number(pct) };
+    }).filter(Boolean);
+    if (items.length === 0) return null;
+    return {
+      name: compact.n || "Shared Recipe",
+      notes: compact.o || "",
+      selGoal: compact.g || null,
+      items,
+    };
+  } catch { return null; }
+};
+
 function SyndetFormulator() {
   const [items, setItems] = useState([]);
   const [selTemplate, setSelTemplate] = useState(null);
@@ -1249,16 +1303,62 @@ function SyndetFormulator() {
   const [search, setSearch] = useState("");
   const [filterSlot, setFilterSlot] = useState("ALL");
   const [selIng, setSelIng] = useState(null);
-  const [batchSize, setBatchSize] = useState(100);
-  const [unit, setUnit] = useState("g");
+  const [batchSize, setBatchSize] = useState(() => { const p = storageGet(STORAGE_KEYS.PREFS, {}); const b = Number(p.batchSize); return b > 0 ? b : 100; });
+  const [unit, setUnit] = useState(() => { const p = storageGet(STORAGE_KEYS.PREFS, {}); return UNITS[p.unit] ? p.unit : "g"; });
   const [anchorId, setAnchorId] = useState(null);
   const [selGoal, setSelGoal] = useState(null);
   // ── Recipe management ──
   const [recipeName, setRecipeName] = useState("Untitled Shampoo Bar");
   const [recipeNotes, setRecipeNotes] = useState("");
-  const [savedRecipes, setSavedRecipes] = useState([]);
+  const [savedRecipes, setSavedRecipes] = useState(() => storageGet(STORAGE_KEYS.SAVED, []));
   const [showSaved, setShowSaved] = useState(false);
   const [showPrint, setShowPrint] = useState(false);
+  const [showDraftBanner, setShowDraftBanner] = useState(false);
+  const [copied, setCopied] = useState(false);
+  // ── Pantry ──
+  const [pantry, setPantry] = useState(() => storageGet(STORAGE_KEYS.PANTRY, []));
+  const [showPantry, setShowPantry] = useState(false);
+  const [pantrySearch, setPantrySearch] = useState("");
+  const [pantryFilterSlot, setPantryFilterSlot] = useState("ALL");
+  const mountedRef = useRef(false);
+
+  // ── Mount: load from URL hash or recover draft ──
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash.startsWith("#recipe=")) {
+      const encoded = hash.slice(8);
+      const recipe = decodeRecipeFromHash(encoded);
+      if (recipe) {
+        setItems(recipe.items); setRecipeName(recipe.name); setRecipeNotes(recipe.notes);
+        setSelGoal(recipe.selGoal); setSelTemplate(null);
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        return;
+      }
+    }
+    const draft = storageGet(STORAGE_KEYS.DRAFT, null);
+    if (draft && draft.items && draft.items.length > 0) { setShowDraftBanner(true); }
+    // Signal to auto-save effect that mount is complete (delayed to run after all initial effects)
+    requestAnimationFrame(() => { mountedRef.current = true; });
+  }, []);
+
+  // ── Persist saved recipes ──
+  useEffect(() => { storageSet(STORAGE_KEYS.SAVED, savedRecipes); }, [savedRecipes]);
+
+  // ── Persist preferences ──
+  useEffect(() => { storageSet(STORAGE_KEYS.PREFS, { batchSize, unit }); }, [batchSize, unit]);
+
+  // ── Persist pantry ──
+  useEffect(() => { storageSet(STORAGE_KEYS.PANTRY, pantry); }, [pantry]);
+
+  // ── Auto-save draft (1s debounce) ──
+  useEffect(() => {
+    if (!mountedRef.current) return;
+    if (items.length === 0) { storageRemove(STORAGE_KEYS.DRAFT); return; }
+    const timer = setTimeout(() => {
+      storageSet(STORAGE_KEYS.DRAFT, { name: recipeName, notes: recipeNotes, items, selGoal, batchSize, unit, savedAt: new Date().toISOString() });
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [items, recipeName, recipeNotes, selGoal, batchSize, unit]);
 
   const loadTemplate = useCallback((t) => {
     setItems(t.ingredients.map(i => ({ ...i }))); setSelTemplate(t.id); setSelIng(null); setShowAdd(false);
@@ -1327,6 +1427,7 @@ function SyndetFormulator() {
       return [recipe, ...prev];
     });
     setShowSaved(true);
+    storageRemove(STORAGE_KEYS.DRAFT);
   }, [recipeName, recipeNotes, items, batchSize, unit, selGoal]);
 
   // ── Load saved recipe ──
@@ -1351,7 +1452,57 @@ function SyndetFormulator() {
     setItems([]); setSelTemplate(null); setSelIng(null); setShowAdd(false);
     setSelGoal(null); setAnchorId(null); setSearch(""); setFilterSlot("ALL");
     setRecipeName("Untitled Shampoo Bar"); setRecipeNotes("");
+    storageRemove(STORAGE_KEYS.DRAFT); setShowDraftBanner(false);
   }, []);
+
+  // ── Draft recovery ──
+  const loadDraft = useCallback(() => {
+    const draft = storageGet(STORAGE_KEYS.DRAFT, null);
+    if (!draft || !draft.items) return;
+    setItems(draft.items.map(i => ({ ...i })));
+    setRecipeName(draft.name || "Untitled Shampoo Bar");
+    setRecipeNotes(draft.notes || "");
+    setBatchSize(draft.batchSize || 100);
+    setUnit(draft.unit || "g");
+    setSelGoal(draft.selGoal || null);
+    setSelTemplate(null);
+    setShowDraftBanner(false);
+  }, []);
+
+  const dismissDraft = useCallback(() => {
+    setShowDraftBanner(false);
+    storageRemove(STORAGE_KEYS.DRAFT);
+  }, []);
+
+  // ── Pantry actions ──
+  const togglePantryItem = useCallback((id) => {
+    setPantry(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
+  }, []);
+  const setPantryAll = useCallback(() => {
+    setPantry(INGREDIENTS.map(i => i.id));
+  }, []);
+  const setPantryClear = useCallback(() => {
+    setPantry([]);
+  }, []);
+
+  // ── Share recipe via URL ──
+  const shareRecipe = useCallback(() => {
+    const encoded = encodeRecipeToHash({ name: recipeName, notes: recipeNotes, items, selGoal });
+    if (!encoded) return;
+    const url = window.location.origin + window.location.pathname + "#recipe=" + encoded;
+    const doCopy = (text) => {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text);
+      }
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      return Promise.resolve();
+    };
+    doCopy(url).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+  }, [recipeName, recipeNotes, items, selGoal]);
 
   // ── Balance to 100% ──
   // Proportionally scales all ingredients so they sum to exactly 100%.
@@ -1451,6 +1602,25 @@ function SyndetFormulator() {
       return true;
     });
   }, [items, filterSlot, search]);
+
+  // ── Pantry derived data ──
+  const pantrySet = useMemo(() => new Set(pantry), [pantry]);
+
+  const templateCompleteness = useMemo(() => {
+    if (pantry.length === 0) return null;
+    return TEMPLATES.map(t => {
+      const total = t.ingredients.length;
+      const owned = t.ingredients.filter(i => pantrySet.has(i.id)).length;
+      return { id: t.id, owned, total, fraction: total > 0 ? owned / total : 0 };
+    });
+  }, [pantry, pantrySet]);
+
+  const sortedTemplates = useMemo(() => {
+    if (!templateCompleteness) return TEMPLATES;
+    const compMap = {};
+    templateCompleteness.forEach(c => { compMap[c.id] = c; });
+    return [...TEMPLATES].sort((a, b) => (compMap[b.id]?.fraction || 0) - (compMap[a.id]?.fraction || 0));
+  }, [templateCompleteness]);
 
   const sel = selIng ? ingredientMap[selIng] : null;
   const slotKeys = Object.keys(FUNCTIONAL_SLOTS);
@@ -1628,16 +1798,28 @@ function SyndetFormulator() {
             borderRadius: 3, background: "transparent", color: items.length ? C.t2 : C.t3,
             cursor: items.length ? "pointer" : "default", opacity: items.length ? 1 : 0.4,
           }}>💾 Save</button>
-          <button onClick={() => setShowSaved(!showSaved)} style={{
+          <button onClick={() => { setShowSaved(s => { if (!s) { setShowPantry(false); setPantrySearch(""); setPantryFilterSlot("ALL"); } return !s; }); }} style={{
             padding: "4px 10px", fontSize: 10, fontWeight: 600, border: `1px solid ${showSaved ? C.acc : C.b1}`,
             borderRadius: 3, background: showSaved ? C.accDim + "30" : "transparent",
             color: showSaved ? C.acc : C.t2, cursor: "pointer",
           }}>📂 Saved{savedRecipes.length > 0 ? ` (${savedRecipes.length})` : ""}</button>
+          <button onClick={() => { setShowPantry(p => { if (!p) setShowSaved(false); else { setPantrySearch(""); setPantryFilterSlot("ALL"); } return !p; }); }} title="Mark ingredients you own to find makeable templates" style={{
+            padding: "4px 10px", fontSize: 10, fontWeight: 600, border: `1px solid ${showPantry ? "#b87a3a" : C.b1}`,
+            borderRadius: 3, background: showPantry ? "#b87a3a20" : "transparent",
+            color: showPantry ? "#b87a3a" : C.t2, cursor: "pointer",
+          }}>🧂 Pantry{pantry.length > 0 ? ` (${pantry.length})` : ""}</button>
           <button onClick={() => setShowPrint(true)} disabled={items.length === 0} title="View printable recipe" style={{
             padding: "4px 10px", fontSize: 10, fontWeight: 600, border: `1px solid ${C.b1}`,
             borderRadius: 3, background: "transparent", color: items.length ? C.t2 : C.t3,
             cursor: items.length ? "pointer" : "default", opacity: items.length ? 1 : 0.4,
           }}>🖨 Recipe</button>
+          <button onClick={shareRecipe} disabled={items.length === 0} title="Copy shareable link" style={{
+            padding: "4px 10px", fontSize: 10, fontWeight: 600, border: `1px solid ${copied ? C.acc : C.b1}`,
+            borderRadius: 3, background: copied ? C.acc : "transparent",
+            color: copied ? "#fff" : (items.length ? C.t2 : C.t3),
+            cursor: items.length ? "pointer" : "default", opacity: items.length ? 1 : 0.4,
+            transition: "all 0.2s",
+          }}>{copied ? "✓ Copied!" : "🔗 Share"}</button>
         </div>
         {/* Recipe name input */}
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
@@ -1677,6 +1859,77 @@ function SyndetFormulator() {
         </div>
       )}
 
+      {/* Pantry drawer */}
+      {showPantry && (() => {
+        const pantrySlotKeys = Object.keys(FUNCTIONAL_SLOTS);
+        const filteredIngredients = INGREDIENTS.filter(i => {
+          if (pantryFilterSlot !== "ALL" && i.slot !== pantryFilterSlot && i.alsoSlot !== pantryFilterSlot) return false;
+          if (pantrySearch) {
+            const s = pantrySearch.toLowerCase();
+            return i.name.toLowerCase().includes(s) || i.tags?.some(t => t.includes(s)) || i.slot.toLowerCase().includes(s);
+          }
+          return true;
+        });
+        return (
+          <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.b1}`, background: C.s2, maxHeight: 240, overflow: "auto" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: 10, color: C.t3, flex: 1 }}>Check ingredients you own — templates will sort by what you can make.</span>
+              <button onClick={setPantryAll} style={{
+                padding: "2px 8px", fontSize: 9, fontWeight: 600, border: `1px solid ${C.b1}`,
+                borderRadius: 3, background: "transparent", color: C.t2, cursor: "pointer",
+              }}>All</button>
+              <button onClick={setPantryClear} style={{
+                padding: "2px 8px", fontSize: 9, fontWeight: 600, border: `1px solid ${C.b1}`,
+                borderRadius: 3, background: "transparent", color: C.t2, cursor: "pointer",
+              }}>Clear</button>
+            </div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+              <input value={pantrySearch} onChange={e => setPantrySearch(e.target.value)} placeholder="Search…"
+                style={{ flex: 1, padding: "4px 7px", fontSize: 11, background: C.bg, border: `1px solid ${C.b1}`, borderRadius: 3, color: C.t1, outline: "none" }} />
+              <select value={pantryFilterSlot} onChange={e => setPantryFilterSlot(e.target.value)}
+                style={{ padding: "4px 5px", fontSize: 10, background: C.bg, border: `1px solid ${C.b1}`, borderRadius: 3, color: C.t2 }}>
+                <option value="ALL">All slots</option>
+                {pantrySlotKeys.map(k => <option key={k} value={k}>{FUNCTIONAL_SLOTS[k].name}</option>)}
+              </select>
+            </div>
+            {filteredIngredients.map(g => {
+              const owned = pantrySet.has(g.id);
+              return (
+                <div key={g.id} onClick={() => togglePantryItem(g.id)} style={{
+                  padding: "4px 6px", cursor: "pointer", borderRadius: 3, marginBottom: 1,
+                  display: "flex", alignItems: "center", gap: 6,
+                  background: owned ? C.acc + "08" : "transparent",
+                }}
+                  onMouseOver={e => e.currentTarget.style.background = owned ? C.acc + "15" : C.s3}
+                  onMouseOut={e => e.currentTarget.style.background = owned ? C.acc + "08" : "transparent"}>
+                  <input type="checkbox" checked={owned} readOnly style={{ accentColor: C.acc, cursor: "pointer", margin: 0 }} />
+                  <div style={{ width: 5, height: 5, borderRadius: "50%", background: g.phase === "dry" ? C.dry : C.wet, opacity: 0.7 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: 10, fontWeight: owned ? 600 : 400, color: C.t1 }}>{g.name}</span>
+                    <span style={{ fontSize: 9, color: C.t3, marginLeft: 6 }}>{FUNCTIONAL_SLOTS[g.slot]?.name}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+
+      {/* Draft recovery banner */}
+      {showDraftBanner && (
+        <div style={{ padding: "8px 14px", borderBottom: `1px solid ${C.info}40`, background: C.infoBg, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 11, color: C.info, flex: 1 }}>You have an unsaved formula from your last session.</span>
+          <button onClick={loadDraft} style={{
+            padding: "3px 10px", fontSize: 10, fontWeight: 600, border: "none",
+            borderRadius: 3, background: C.info, color: "#fff", cursor: "pointer",
+          }}>Resume</button>
+          <button onClick={dismissDraft} style={{
+            padding: "3px 10px", fontSize: 10, fontWeight: 600, border: `1px solid ${C.info}`,
+            borderRadius: 3, background: "transparent", color: C.info, cursor: "pointer",
+          }}>Dismiss</button>
+        </div>
+      )}
+
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         {/* ══════ LEFT PANEL ══════ */}
         <div style={{ flex: "1 1 440px", display: "flex", flexDirection: "column", borderRight: `1px solid ${C.b1}`, minWidth: 0 }}>
@@ -1688,15 +1941,24 @@ function SyndetFormulator() {
           <div style={{ padding: "10px 14px 6px", borderBottom: `1px solid ${C.b1}`, background: C.s1 }}>
             <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", color: C.t3, marginBottom: 6 }}>Start from template</div>
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-              {TEMPLATES.map(t => (
-                <button key={t.id} onClick={() => { loadTemplate(t); setSelGoal(null); }} title={`${t.source}: ${t.description}`} style={{
-                  padding: "4px 8px", fontSize: 10, border: `1px solid ${selTemplate === t.id ? C.acc : C.b1}`,
-                  borderRadius: 3, background: selTemplate === t.id ? C.accDim + "30" : "transparent",
-                  color: selTemplate === t.id ? C.acc : C.t2, cursor: "pointer", whiteSpace: "nowrap",
-                }}>
-                  {t.name}
-                </button>
-              ))}
+              {sortedTemplates.map(t => {
+                const comp = templateCompleteness && templateCompleteness.find(c => c.id === t.id);
+                const badgeColor = comp ? (comp.fraction >= 1 ? C.acc : comp.fraction > 0.5 ? "#b87a3a" : C.err) : null;
+                const dimmed = comp && comp.fraction <= 0.5;
+                return (
+                  <button key={t.id} onClick={() => { loadTemplate(t); setSelGoal(null); }}
+                    title={comp ? `${t.source}: ${t.description} — You own ${comp.owned}/${comp.total} ingredients` : `${t.source}: ${t.description}`}
+                    style={{
+                      padding: "4px 8px", fontSize: 10, border: `1px solid ${selTemplate === t.id ? C.acc : C.b1}`,
+                      borderRadius: 3, background: selTemplate === t.id ? C.accDim + "30" : "transparent",
+                      color: selTemplate === t.id ? C.acc : C.t2, cursor: "pointer", whiteSpace: "nowrap",
+                      opacity: dimmed ? 0.45 : 1,
+                    }}>
+                    {t.name}
+                    {comp && <span style={{ marginLeft: 4, fontSize: 9, fontWeight: 600, color: badgeColor }}>({comp.owned}/{comp.total})</span>}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -1914,6 +2176,11 @@ function SyndetFormulator() {
                       <div style={{ fontSize: 10, fontWeight: 500 }}>{g.name}</div>
                       <div style={{ fontSize: 9, color: C.t3 }}>{FUNCTIONAL_SLOTS[g.slot]?.name} · {g.minPct}–{g.maxPct}%{g.asm ? ` · ASM ${(g.asm * 100).toFixed(0)}%` : ""} · {toUnit(g.maxPct * batchSize / 100, unit).toFixed(unit === "g" ? 1 : 2)}{UNITS[unit].label} max</div>
                     </div>
+                    {pantry.length > 0 && (
+                      <span style={{ fontSize: 8, fontWeight: 500, color: pantrySet.has(g.id) ? C.acc : C.t3, marginRight: 4, opacity: 0.8 }}>
+                        {pantrySet.has(g.id) ? "owned" : "not owned"}
+                      </span>
+                    )}
                     <span style={{ fontSize: 9, color: C.acc }}>+ add</span>
                   </div>
                 ))
